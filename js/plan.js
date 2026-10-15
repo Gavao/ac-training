@@ -101,7 +101,9 @@ export function parsePlan(text) {
         // "Hip thrust (bilanciere o macchina)": il nome per la libreria e il dettaglio tra parentesi.
         const paren = nome.match(/^(.*?)\s*\((.*)\)\s*$/);
         const base = paren ? paren[1] : nome;
-        const lib = findExercise(e.id) ?? findExercise(base) ?? findExercise(nome);
+        // Prima nome + dettaglio ("Crunch" "alla macchina" → Crunch alla macchina), poi il nome da solo.
+        const det = String(e.dettaglio ?? '');
+        const lib = findExercise(e.id) ?? (det ? findExercise(`${base} ${det}`) : null) ?? findExercise(base) ?? findExercise(nome);
         const serie = Math.max(1, Math.round(Number(e.serie) || 3));
         const ripetizioni = String(e.ripetizioni ?? e.reps ?? '10');
         const target = parseTarget(ripetizioni);

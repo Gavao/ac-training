@@ -27,7 +27,7 @@ export const EXERCISES = [
   },
   {
     id: 'panca-piana-manubri', nome: 'Panca piana con manubri', gruppo: 'Petto', img: 'Dumbbell_Bench_Press', tipo: 'kg',
-    alias: ['dumbbell bench press', 'distensioni con manubri'],
+    alias: ['dumbbell bench press', 'distensioni con manubri', 'spinte con manubri', 'spinte con manubri su panca piana'],
     muscoli: 'Pettorali, tricipiti, deltoidi anteriori',
     passi: [
       'Siediti sulla panca con i manubri sulle cosce, poi sdraiati portandoli all\'altezza del petto.',
@@ -42,7 +42,7 @@ export const EXERCISES = [
   },
   {
     id: 'panca-inclinata-manubri', nome: 'Panca inclinata con manubri', gruppo: 'Petto', img: 'Incline_Dumbbell_Press', tipo: 'kg',
-    alias: ['panca inclinata', 'incline dumbbell press', 'distensioni inclinata manubri'],
+    alias: ['panca inclinata', 'incline dumbbell press', 'distensioni inclinata manubri', 'spinte con manubri su panca inclinata', 'spinte manubri panca inclinata', 'spinte su panca inclinata'],
     muscoli: 'Pettorale alto, deltoidi anteriori, tricipiti',
     passi: [
       'Regola lo schienale a 30-45°.',
@@ -142,7 +142,7 @@ export const EXERCISES = [
   // ---------------------------------------------------------------- Schiena
   {
     id: 'lat-machine', nome: 'Lat machine avanti', gruppo: 'Schiena', img: 'Wide-Grip_Lat_Pulldown', tipo: 'kg',
-    alias: ['lat machine', 'lat pulldown', 'lat machine presa larga'],
+    alias: ['lat machine', 'lat pulldown', 'lat machine presa larga', 'vertical traction', 'trazione verticale', 'lat machine presa stretta'],
     muscoli: 'Gran dorsale, bicipiti, romboidi',
     passi: [
       'Siediti con le cosce bloccate sotto i cuscinetti.',
@@ -286,7 +286,7 @@ export const EXERCISES = [
   },
   {
     id: 'shoulder-press-macchina', nome: 'Shoulder press (macchina)', gruppo: 'Spalle', img: 'Machine_Shoulder_Military_Press', tipo: 'kg',
-    alias: ['shoulder press macchina', 'lento alla macchina'],
+    alias: ['shoulder press macchina', 'shoulder press alla macchina', 'lento alla macchina', 'spinte sopra la testa alla macchina'],
     muscoli: 'Deltoidi, tricipiti',
     passi: [
       'Regola il sedile con le maniglie all\'altezza delle spalle.',
@@ -306,6 +306,18 @@ export const EXERCISES = [
       'Scendi lentamente.',
     ],
     consigli: ['Pesi leggeri: con troppo peso lavora il trapezio e non la spalla.', 'Immagina di versare acqua da una brocca.'],
+  },
+  {
+    id: 'pectoral-inversa', nome: 'Pectoral machine inversa', gruppo: 'Spalle', img: 'Reverse_Machine_Flyes', tipo: 'kg',
+    alias: ['pectoral machine inversa', 'pectoral inversa', 'reverse pec deck', 'reverse fly alla macchina', 'rear delt machine', 'butterfly inversa'],
+    muscoli: 'Deltoidi posteriori, romboidi',
+    passi: [
+      'Siediti rivolto verso lo schienale, con il petto appoggiato e le maniglie all\'altezza delle spalle.',
+      'Impugna le maniglie a braccia tese davanti a te.',
+      'Apri le braccia all\'indietro stringendo le scapole.',
+      'Torna avanti lentamente.',
+    ],
+    consigli: ['Gomiti appena piegati e fermi: si muovono solo le spalle.', 'Peso leggero, movimento lento.'],
   },
   {
     id: 'alzate-posteriori', nome: 'Alzate posteriori a busto flesso', gruppo: 'Spalle', img: 'Reverse_Flyes', tipo: 'kg',
@@ -690,6 +702,18 @@ export const EXERCISES = [
       'Scendi lentamente.',
     ],
     consigli: ['Non tirare la testa con le mani.', 'Movimento corto: conta la contrazione, non l\'altezza.'],
+  },
+  {
+    id: 'crunch-macchina', nome: 'Crunch alla macchina', gruppo: 'Addome', img: 'Ab_Crunch_Machine', tipo: 'kg',
+    alias: ['crunch alla macchina', 'crunch macchina', 'ab crunch', 'abdominal machine', 'macchina addominali'],
+    muscoli: 'Addome',
+    passi: [
+      'Siediti con la schiena appoggiata e i piedi bloccati sotto i rulli.',
+      'Impugna le maniglie (o appoggia le braccia ai cuscinetti).',
+      'Arrotola il busto in avanti contraendo l\'addome.',
+      'Torna su lentamente senza far sbattere i pesi.',
+    ],
+    consigli: ['Spingi con l\'addome, non con le braccia.', 'Espira mentre ti chiudi.'],
   },
   {
     id: 'crunch-inverso', nome: 'Crunch inverso', gruppo: 'Addome', img: 'Reverse_Crunch', tipo: 'corpo',
