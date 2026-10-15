@@ -2,7 +2,7 @@
 // Tutti i dati restano nel telefono (IndexedDB); il backup è un file che si salva o si condivide.
 import { db, getSetting, setSetting } from './db.js';
 import { EXERCISES, GROUPS, exerciseById } from './exercises.js';
-import { parsePlan, exKey, CLAUDE_PROMPT } from './plan.js';
+import { parsePlan, exKey, CLAUDE_PROMPT, buildItem, planToJson } from './plan.js';
 import { bars, lines } from './charts.js';
 import { APP_VERSION } from './version.js';
 
@@ -458,10 +458,11 @@ sheet.addEventListener('click', e => {
 function plansPage() {
   view.innerHTML = `<header class="top"><h1>Schede</h1></header>
     <div class="actions"><button class="primary" data-import>Importa una scheda</button>
-      <button class="secondary" data-prompt>Come farla preparare a Claude</button></div>
+      <button class="secondary" data-newplan>Crea una scheda</button></div>
+    <button class="link" data-prompt>Come farla preparare a Claude</button>
     ${plans.length ? plans.map(p => `<a class="plan-card ${p.id === activeId ? 'active' : ''}" href="#/scheda/${p.id}">
         <span><b>${esc(p.nome)}</b><small>${esc([p.persona, p.obiettivo].filter(Boolean).join(' · '))}</small>
-        <small>${plural(p.giorni.length, 'giorno', 'giorni')}: ${p.giorni.map(d => esc(d.nome)).join(', ')} · importata il ${shortDate(p.imported)}</small></span>
+        <small>${plural(p.giorni.length, 'giorno', 'giorni')}: ${p.giorni.map(d => esc(d.nome)).join(', ')} · ${planDateText(p)}</small></span>
         ${p.id === activeId ? '<span class="badge">In uso</span>' : '<span class="chev">›</span>'}</a>`).join('')
       : '<p class="note">Ancora nessuna scheda. Chiedi a Claude la scheda nel formato di AC Training (vedi "Come farla preparare a Claude"), poi importala qui.</p>'}`;
 }
@@ -481,7 +482,267 @@ function planDetail(id) {
         <span class="ex-body"><b>${i + 1}. ${esc(e.nome)}</b>${e.dettaglio ? `<small>${esc(e.dettaglio)}</small>` : ''}
         <span class="ex-target">${esc(e.muscoli)}${e.muscoli ? ' · ' : ''}${e.serie} × ${esc(e.ripetizioni)} · ${e.riposo} s</span></span></button>`).join('')}</div>`).join('')}
     ${missing ? `<p class="note">${plural(missing, 'esercizio non è', 'esercizi non sono')} nella libreria dell'app: niente foto, ma c'è il video.</p>` : ''}
+    <div class="actions plan-tools">
+      <a class="secondary" href="#/modifica/${p.id}">Modifica</a>
+      <button class="secondary" data-dupplan="${p.id}">Duplica</button>
+      <button class="secondary" data-shareplan="${p.id}">Condividi</button></div>
     <button class="link danger" data-delplan="${p.id}">Elimina questa scheda</button>`;
+}
+
+const planDateText = p => (p.updated ? `modificata il ${shortDate(p.updated)}` : p.manual ? `creata il ${shortDate(p.imported)}` : `importata il ${shortDate(p.imported)}`);
+
+// ---------------------------------------------------------------------------
+// Editor delle schede: nome, giorni ed esercizi. Ogni modifica si salva subito (niente da perdere
+// se si esce dalla pagina); gli allenamenti già fatti non cambiano, i progressi seguono l'esercizio.
+// ---------------------------------------------------------------------------
+const editPlan = () => plans.find(p => p.id === location.hash.split('/')[2]);
+const dayLabel = d => (d.nome.length <= 2 ? 'Allenamento ' + d.nome : d.nome);
+const nextDayName = p => {
+  for (let c = 65; c < 91; c++) if (!p.giorni.some(d => d.nome === String.fromCharCode(c))) return String.fromCharCode(c);
+  return String(p.giorni.length + 1);
+};
+
+async function touchPlan(p) {
+  p.updated = today();
+  await savePlans();
+}
+
+function newPlan() {
+  const p = { id: 'p' + Date.now(), formato: 'ac-training/1', nome: 'La mia scheda', persona: '', obiettivo: '', manual: true,
+    note: [], riscaldamento: [], defaticamento: [], regole: [], giorni: [{ nome: 'A', titolo: '', esercizi: [] }], imported: today() };
+  plans.push(p);
+  if (!activeId) { activeId = p.id; setSetting('activePlan', activeId); }
+  savePlans();
+  location.hash = '#/modifica/' + p.id;
+}
+
+function planEditor() {
+  const p = editPlan();
+  if (!p) { location.hash = '#/schede'; return; }
+  const lines = k => esc((p[k] ?? []).join('\n'));
+  view.innerHTML = `<header class="top"><a class="back" href="#/scheda/${p.id}" aria-label="Indietro">‹</a><h1>Modifica scheda</h1></header>
+    <p class="note">Le modifiche si salvano da sole. Gli allenamenti già fatti restano com'erano.</p>
+    <label class="field stack"><span>Nome della scheda</span><input data-pf="nome" value="${esc(p.nome)}" autocomplete="off"></label>
+    <label class="field stack"><span>Obiettivo</span><input data-pf="obiettivo" value="${esc(p.obiettivo)}" placeholder="es. glutei e gambe" autocomplete="off"></label>
+    <details class="box"><summary>Note, regole, riscaldamento, defaticamento</summary>
+      <div class="box-body">
+        ${[['note', 'Come funziona'], ['regole', 'Regole'], ['riscaldamento', 'Riscaldamento'], ['defaticamento', 'Defaticamento']].map(([k, label]) =>
+          `<label class="field stack"><span>${label} <small>(una voce per riga)</small></span><textarea data-pl="${k}" rows="3">${lines(k)}</textarea></label>`).join('')}
+      </div></details>
+    ${p.giorni.map((d, di) => `<section class="ed-day" data-day-ed="${di}">
+      <div class="ed-day-head">
+        <input class="ed-day-name" data-df="nome" value="${esc(d.nome)}" aria-label="Nome del giorno">
+        <input data-df="titolo" value="${esc(d.titolo)}" placeholder="Muscoli del giorno (es. Glutei e gambe)" aria-label="Titolo del giorno">
+      </div>
+      <div class="ed-list">${d.esercizi.map((e, i) => `<div class="ed-ex">
+        <button class="ed-ex-main" data-editex="${di}:${i}">${thumb(e)}<span class="ex-body"><b>${i + 1}. ${esc(e.nome)}</b>
+          <span class="ex-target">${e.serie} × ${esc(e.ripetizioni)} · ${e.riposo} s${e.superserie ? ` · ${esc(e.superserie)}` : ''}</span>
+          ${e.dettaglio ? `<small>${esc(e.dettaglio)}</small>` : ''}</span></button>
+        <span class="ed-move"><button data-exup="${di}:${i}" ${i ? '' : 'disabled'} aria-label="Sposta su">▲</button>
+          <button data-exdown="${di}:${i}" ${i < d.esercizi.length - 1 ? '' : 'disabled'} aria-label="Sposta giù">▼</button></span>
+      </div>`).join('') || '<p class="note">Nessun esercizio: aggiungine uno.</p>'}</div>
+      <div class="ed-day-tools">
+        <button class="secondary" data-addex="${di}">+ Esercizio</button>
+        <button class="link" data-dayup="${di}" ${di ? '' : 'disabled'}>▲ Giorno</button>
+        <button class="link" data-daydup="${di}">Duplica giorno</button>
+        <button class="link danger-inline" data-daydel="${di}">Elimina giorno</button>
+      </div>
+    </section>`).join('')}
+    <button class="secondary wide" data-addday>+ Aggiungi un giorno</button>
+    <a class="primary" href="#/scheda/${p.id}">Fatto</a>`;
+}
+
+// Scelta dell'esercizio: dalla libreria (con foto e spiegazione) oppure un nome libero.
+let pickTarget = null;   // { di, i? }: giorno e, se si sta cambiando un esercizio, la sua posizione
+function pickExercise(di, i = null) {
+  pickTarget = { di, i };
+  sheet.innerHTML = `<div class="sheet-head"><h2>${i == null ? 'Aggiungi esercizio' : 'Cambia esercizio'}</h2><button class="icon" data-close>✕</button></div>
+    <input type="search" id="pickSearch" placeholder="Cerca (es. glutei, panca, lat…)" autocomplete="off">
+    <div id="pickList">${pickList('')}</div>`;
+  if (!sheet.open) sheet.showModal();   // dal modulo dell'esercizio la finestra è già aperta
+}
+
+function pickList(q) {
+  const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const match = e => !q || [e.nome, e.muscoli, e.gruppo, ...e.alias].some(t => norm(t).includes(norm(q)));
+  const groups = GROUPS.map(g => {
+    const list = EXERCISES.filter(e => e.gruppo === g && match(e));
+    return list.length ? `<h3>${g}</h3>${list.map(e => `<button class="row pick" data-pick="${e.id}">${thumb({ ex: e.id })}
+      <span><b>${esc(e.nome)}</b><small>${esc(e.muscoli)}</small></span></button>`).join('')}` : '';
+  }).join('');
+  return `${q ? `<button class="row pick" data-pickfree><span><b>Usa "${esc(q)}"</b><small>esercizio non in libreria: niente foto, ma c'è il video</small></span></button>` : ''}
+    ${groups || '<p class="note">Nessun esercizio in libreria con questo nome.</p>'}`;
+}
+
+/** Valori iniziali sensati in base al tipo di esercizio. */
+function defaultsFor(lib) {
+  if (lib?.tipo === 'min') return { serie: 1, ripetizioni: '10 minuti', riposo: 0 };
+  if (lib?.tipo === 'sec') return { serie: 3, ripetizioni: '30 secondi', riposo: 45 };
+  if (lib?.gruppo === 'Addome') return { serie: 3, ripetizioni: '15', riposo: 45 };
+  return { serie: 3, ripetizioni: '12', riposo: 60 };
+}
+
+async function pickDone(lib, freeName = null) {
+  const p = editPlan();
+  const { di, i } = pickTarget;
+  const day = p.giorni[di];
+  if (i == null) {
+    day.esercizi.push(buildItem({ id: lib?.id, esercizio: lib?.nome ?? freeName, ...defaultsFor(lib) }));
+    await touchPlan(p);
+    planEditor();
+    exerciseEditor(di, day.esercizi.length - 1);
+  } else {
+    // Cambio esercizio: restano serie, ripetizioni e riposo; cambiano nome, foto e muscoli.
+    const old = day.esercizi[i];
+    day.esercizi[i] = buildItem({ id: lib?.id, esercizio: lib?.nome ?? freeName, serie: old.serie, ripetizioni: old.ripetizioni,
+      riposo: old.riposo, superserie: old.superserie, note: old.note });
+    await touchPlan(p);
+    planEditor();
+    exerciseEditor(di, i);
+  }
+}
+
+function exerciseEditor(di, i) {
+  const p = editPlan();
+  const e = p.giorni[di].esercizi[i];
+  const chips = (key, values, current) => `<div class="quick">${values.map(v => `<button class="chip ${String(v) === String(current) ? 'on' : ''}" data-quick="${key}" data-value="${esc(v)}">${esc(key === 'riposo' ? v + ' s' : v)}</button>`).join('')}</div>`;
+  sheet.innerHTML = `<div class="sheet-head"><div><h2>${esc(e.nome)}</h2><small>${esc(dayLabel(p.giorni[di]))} · esercizio ${i + 1}</small></div>
+      <button class="icon" data-close aria-label="Chiudi">✕</button></div>
+    <div class="ed-form" data-exform="${di}:${i}">
+      <button class="row" data-changeex><span>${thumb(e)}</span><span><b>${esc(e.nome)}</b><small>Tocca per cambiare esercizio</small></span><span class="chev">›</span></button>
+      <label class="field stack"><span>Dettaglio <small>(variante, es. "presa larga")</small></span><input data-ef="dettaglio" value="${esc(e.dettaglio)}" autocomplete="off"></label>
+      <label class="field stack"><span>Muscoli</span><input data-ef="muscoli" value="${esc(e.muscoli)}" autocomplete="off"></label>
+      <div class="field stack"><span>Serie</span>
+        <div class="stepper"><button data-step="-1" aria-label="Una serie in meno">−</button><b id="serieVal">${e.serie}</b><button data-step="1" aria-label="Una serie in più">+</button></div></div>
+      <label class="field stack"><span>Ripetizioni <small>(es. 12, 8-10, 30 secondi, 12 per gamba)</small></span><input data-ef="ripetizioni" value="${esc(e.ripetizioni)}" autocomplete="off"></label>
+      ${chips('ripetizioni', ['8-10', '10', '12', '15', '30 secondi', '10 minuti'], e.ripetizioni)}
+      <label class="field stack"><span>Riposo (secondi)</span><input data-ef="riposo" inputmode="numeric" value="${e.riposo}"></label>
+      ${chips('riposo', [0, 30, 45, 60, 90, 120], e.riposo)}
+      <label class="field stack"><span>Peso consigliato (kg) <small>(facoltativo)</small></span><input data-ef="peso" inputmode="decimal" value="${e.peso ?? ''}"></label>
+      <label class="field stack"><span>Superserie <small>(stessa sigla, es. S1, per esercizi di fila senza riposo)</small></span><input data-ef="superserie" value="${esc(e.superserie)}" autocomplete="off"></label>
+      <label class="field stack"><span>Note</span><textarea data-ef="note" rows="2">${esc(e.note)}</textarea></label>
+    </div>
+    <button class="primary" data-saveex>Salva</button>
+    <div class="actions"><button class="secondary" data-dupex>Duplica</button><button class="secondary danger-text" data-delex>Elimina esercizio</button></div>`;
+  if (!sheet.open) sheet.showModal();
+}
+
+/** Legge il modulo dell'esercizio e lo salva nella scheda. */
+async function saveExerciseForm() {
+  const form = sheet.querySelector('[data-exform]');
+  const [di, i] = form.dataset.exform.split(':').map(Number);
+  const p = editPlan();
+  const old = p.giorni[di].esercizi[i];
+  const f = k => form.querySelector(`[data-ef="${k}"]`).value;
+  p.giorni[di].esercizi[i] = buildItem({ id: old.ex, esercizio: old.nome, dettaglio: f('dettaglio'), muscoli: f('muscoli'),
+    serie: +$('#serieVal').textContent, ripetizioni: f('ripetizioni').trim() || '10', riposo: f('riposo'), peso: f('peso'),
+    superserie: f('superserie'), note: f('note') });
+  await touchPlan(p);
+}
+
+/** Tocchi dell'editor delle schede; true se il tocco era suo. */
+async function planEditorClick(t) {
+  const pos = (sel, key) => t.closest(sel)?.dataset[key]?.split(':').map(Number);
+  const dup = t.closest('[data-dupplan]');
+  if (dup) {
+    const src = plans.find(p => p.id === dup.dataset.dupplan);
+    const copy = { ...structuredClone(src), id: 'p' + Date.now(), nome: `${src.nome} (copia)`, manual: true, updated: null, imported: today() };
+    plans.push(copy);
+    await savePlans();
+    toast('Scheda duplicata: ora puoi modificarla');
+    location.hash = '#/modifica/' + copy.id;
+    return true;
+  }
+  const share = t.closest('[data-shareplan]');
+  if (share) { sharePlan(plans.find(p => p.id === share.dataset.shareplan)); return true; }
+  const p = editPlan();
+  if (!p || !location.hash.startsWith('#/modifica/')) return false;
+
+  let at;
+  if ((at = pos('[data-editex]', 'editex'))) { exerciseEditor(...at); return true; }
+  if ((at = pos('[data-addex]', 'addex'))) { pickExercise(at[0]); return true; }
+  for (const [sel, key, delta] of [['[data-exup]', 'exup', -1], ['[data-exdown]', 'exdown', 1]]) {
+    if ((at = pos(sel, key))) {
+      const list = p.giorni[at[0]].esercizi;
+      const [moved] = list.splice(at[1], 1);
+      list.splice(at[1] + delta, 0, moved);
+      await touchPlan(p);
+      planEditor();
+      return true;
+    }
+  }
+  if (t.closest('[data-addday]')) {
+    p.giorni.push({ nome: nextDayName(p), titolo: '', esercizi: [] });
+    await touchPlan(p);
+    planEditor();
+    scrollTo(0, document.body.scrollHeight);
+    return true;
+  }
+  if ((at = pos('[data-dayup]', 'dayup'))) {
+    const [moved] = p.giorni.splice(at[0], 1);
+    p.giorni.splice(at[0] - 1, 0, moved);
+    await touchPlan(p);
+    planEditor();
+    return true;
+  }
+  if ((at = pos('[data-daydup]', 'daydup'))) {
+    p.giorni.splice(at[0] + 1, 0, { ...structuredClone(p.giorni[at[0]]), nome: nextDayName(p) });
+    await touchPlan(p);
+    planEditor();
+    return true;
+  }
+  if ((at = pos('[data-daydel]', 'daydel'))) {
+    if (p.giorni.length === 1) { toast('Una scheda deve avere almeno un giorno.'); return true; }
+    if (!confirm(`Eliminare ${dayLabel(p.giorni[at[0]])} con i suoi esercizi?`)) return true;
+    p.giorni.splice(at[0], 1);
+    await touchPlan(p);
+    planEditor();
+    return true;
+  }
+  const pick = t.closest('[data-pick]');
+  if (pick) { await pickDone(exerciseById(pick.dataset.pick)); return true; }
+  if (t.closest('[data-pickfree]')) { await pickDone(null, $('#pickSearch').value.trim()); return true; }
+
+  // Modulo dell'esercizio
+  const form = sheet.querySelector('[data-exform]');
+  if (!form || !sheet.contains(t)) return false;
+  const [di, i] = form.dataset.exform.split(':').map(Number);
+  const step = t.closest('[data-step]');
+  if (step) { const el = $('#serieVal'); el.textContent = Math.max(1, Math.min(10, +el.textContent + +step.dataset.step)); return true; }
+  const quick = t.closest('[data-quick]');
+  if (quick) {
+    form.querySelector(`[data-ef="${quick.dataset.quick}"]`).value = quick.dataset.value;
+    for (const c of sheet.querySelectorAll(`[data-quick="${quick.dataset.quick}"]`)) c.classList.toggle('on', c === quick);
+    return true;
+  }
+  if (t.closest('[data-changeex]')) { await saveExerciseForm(); pickExercise(di, i); return true; }
+  if (t.closest('[data-saveex]')) { await saveExerciseForm(); sheet.close(); planEditor(); toast('Esercizio salvato'); return true; }
+  if (t.closest('[data-dupex]')) {
+    await saveExerciseForm();
+    const list = p.giorni[di].esercizi;
+    list.splice(i + 1, 0, structuredClone(list[i]));
+    await touchPlan(p);
+    planEditor();
+    exerciseEditor(di, i + 1);
+    toast('Esercizio duplicato');
+    return true;
+  }
+  if (t.closest('[data-delex]')) {
+    if (!confirm(`Togliere "${p.giorni[di].esercizi[i].nome}" da questo giorno?`)) return true;
+    p.giorni[di].esercizi.splice(i, 1);
+    await touchPlan(p);
+    sheet.close();
+    planEditor();
+    return true;
+  }
+  return false;
+}
+
+async function sharePlan(p) {
+  const text = planToJson(p);
+  if (native?.shareText) return native.shareText(`Scheda ${p.nome}`, text);
+  if (navigator.share) { try { await navigator.share({ title: `Scheda ${p.nome}`, text }); return; } catch (err) { if (err.name === 'AbortError') return; } }
+  try { await navigator.clipboard.writeText(text); toast('Scheda copiata: incollala dove vuoi mandarla'); } catch { toast('Condivisione non disponibile'); }
 }
 
 function importSheet() {
@@ -957,6 +1218,8 @@ document.addEventListener('click', async e => {
     return;
   }
   if (t.closest('[data-doimport]')) return doImport($('#planText').value);
+  if (t.closest('[data-newplan]')) return newPlan();
+  if (await planEditorClick(t)) return;
   const act = t.closest('[data-activate]');
   if (act) {
     activeId = act.dataset.activate;
@@ -1048,10 +1311,25 @@ document.addEventListener('input', e => {
     morePage.timer = setTimeout(() => setSetting('profile', profile), 400);
   }
   if (input.id === 'libSearch') $('#libList').innerHTML = libraryList(input.value.trim());
+  if (input.id === 'pickSearch') $('#pickList').innerHTML = pickList(input.value.trim());
 });
 
 document.addEventListener('change', async e => {
-  const file = e.target.files?.[0];
+  // Editor delle schede: nome, obiettivo, testi e giorni si salvano quando si lascia il campo.
+  const el = e.target;
+  if (el.dataset.pf || el.dataset.pl || el.dataset.df) {
+    const p = editPlan();
+    if (!p) return;
+    if (el.dataset.pf) p[el.dataset.pf] = el.value.trim() || (el.dataset.pf === 'nome' ? 'La mia scheda' : '');
+    if (el.dataset.pl) p[el.dataset.pl] = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+    if (el.dataset.df) {
+      const day = p.giorni[+el.closest('[data-day-ed]').dataset.dayEd];
+      day[el.dataset.df] = el.value.trim() || (el.dataset.df === 'nome' ? nextDayName(p) : '');
+    }
+    await touchPlan(p);
+    return;
+  }
+  const file = el.files?.[0];
   if (!file) return;
   if (e.target.id === 'planFile') { $('#planText').value = await file.text(); doImport($('#planText').value); }
   if (e.target.id === 'restoreFile') restoreBackup(file);
@@ -1070,13 +1348,14 @@ window.appBack = () => {
 // ---------------------------------------------------------------------------
 function route() {
   const [page, arg] = location.hash.replace(/^#\/?/, '').split('/');
-  const tab = { '': 'today', allenamento: 'today', schede: 'plans', scheda: 'plans', progressi: 'progress', esercizio: 'progress',
+  const tab = { '': 'today', allenamento: 'today', schede: 'plans', scheda: 'plans', modifica: 'plans', progressi: 'progress', esercizio: 'progress',
     corpo: 'body', altro: 'more', libreria: 'more' }[page] ?? 'today';
   for (const a of document.querySelectorAll('#nav a')) a.classList.toggle('on', a.dataset.tab === tab);
   document.body.classList.toggle('in-workout', page === 'allenamento');
   if (page === 'allenamento') workoutPage();
   else if (page === 'schede') plansPage();
   else if (page === 'scheda') planDetail(decodeURIComponent(arg));
+  else if (page === 'modifica') planEditor();
   else if (page === 'progressi') progressPage();
   else if (page === 'esercizio') exerciseProgress(decodeURIComponent(arg));
   else if (page === 'corpo') bodyPage();

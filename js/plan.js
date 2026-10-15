@@ -86,6 +86,52 @@ function normalize(raw) {
   };
 }
 
+/**
+ * Esercizio di una scheda nel formato dell'app, collegato alla libreria (foto e spiegazione).
+ * e: { esercizio, id?, dettaglio, muscoli, serie, ripetizioni, riposo, peso, superserie, note }.
+ * Serve sia all'importazione sia all'editor delle schede.
+ */
+export function buildItem(e) {
+  const nome = String(e.esercizio ?? e.nome ?? '').trim();
+  // "Hip thrust (bilanciere o macchina)": il nome per la libreria e il dettaglio tra parentesi.
+  const paren = nome.match(/^(.*?)\s*\((.*)\)\s*$/);
+  const base = paren ? paren[1] : nome;
+  // Prima nome + dettaglio ("Crunch" "alla macchina" → Crunch alla macchina), poi il nome da solo.
+  const det = String(e.dettaglio ?? '');
+  const lib = findExercise(e.id) ?? (det ? findExercise(`${base} ${det}`) : null) ?? findExercise(base) ?? findExercise(nome);
+  const serie = Math.max(1, Math.round(Number(e.serie) || 3));
+  const ripetizioni = String(e.ripetizioni ?? e.reps ?? '10');
+  const target = parseTarget(ripetizioni);
+  // Tipo di registrazione: dalla scheda (secondi/minuti), altrimenti dalla libreria.
+  const tipo = target.unit === 'sec' ? 'sec' : target.unit === 'min' ? 'min' : lib?.tipo === 'sec' || lib?.tipo === 'min' ? lib.tipo : lib?.tipo ?? 'kg';
+  const riposo = Number(e.riposo);   // 0 è valido (primo esercizio di una superserie)
+  const peso = parseFloat(String(e.peso ?? '').replace(',', '.'));
+  return {
+    ex: lib?.id ?? null,
+    nome: base,
+    dettaglio: String(e.dettaglio ?? (paren ? paren[2] : '')),
+    muscoli: String(e.muscoli || lib?.muscoli || ''),
+    serie, ripetizioni, target, tipo,
+    riposo: Number.isFinite(riposo) && e.riposo !== '' && e.riposo != null ? Math.max(0, Math.round(riposo)) : 60,
+    peso: Number.isFinite(peso) ? peso : null,
+    superserie: e.superserie ? String(e.superserie).trim() : '',
+    note: String(e.note ?? ''),
+  };
+}
+
+/** Scheda dell'app → JSON nel formato da importare (per condividerla o ricaricarla altrove). */
+export function planToJson(p) {
+  return JSON.stringify({
+    formato: FORMAT, nome: p.nome, persona: p.persona, obiettivo: p.obiettivo,
+    note: p.note, riscaldamento: p.riscaldamento, defaticamento: p.defaticamento, regole: p.regole,
+    giorni: p.giorni.map(d => ({
+      nome: d.nome, titolo: d.titolo,
+      esercizi: d.esercizi.map(e => ({ id: e.ex ?? undefined, esercizio: e.nome, dettaglio: e.dettaglio, muscoli: e.muscoli, serie: e.serie,
+        ripetizioni: e.ripetizioni, riposo: e.riposo, peso: e.peso, superserie: e.superserie, note: e.note })),
+    })),
+  }, null, 2);
+}
+
 /** Scheda pronta per l'app, con gli esercizi collegati alla libreria (foto e spiegazione). */
 export function parsePlan(text) {
   const raw = normalize(typeof text === 'string' ? extractJson(text) : text);
@@ -96,30 +142,8 @@ export function parsePlan(text) {
       nome: String(g.nome ?? String.fromCharCode(65 + gi)),
       titolo: String(g.titolo ?? ''),
       esercizi: g.esercizi.map((e, ei) => {
-        const nome = String(e.esercizio ?? e.nome ?? '').trim();
-        if (!nome) throw new Error(`Nel giorno ${g.nome ?? gi + 1} l'esercizio n° ${ei + 1} non ha il nome.`);
-        // "Hip thrust (bilanciere o macchina)": il nome per la libreria e il dettaglio tra parentesi.
-        const paren = nome.match(/^(.*?)\s*\((.*)\)\s*$/);
-        const base = paren ? paren[1] : nome;
-        // Prima nome + dettaglio ("Crunch" "alla macchina" → Crunch alla macchina), poi il nome da solo.
-        const det = String(e.dettaglio ?? '');
-        const lib = findExercise(e.id) ?? (det ? findExercise(`${base} ${det}`) : null) ?? findExercise(base) ?? findExercise(nome);
-        const serie = Math.max(1, Math.round(Number(e.serie) || 3));
-        const ripetizioni = String(e.ripetizioni ?? e.reps ?? '10');
-        const target = parseTarget(ripetizioni);
-        // Tipo di registrazione: dalla scheda (secondi/minuti), altrimenti dalla libreria.
-        const tipo = target.unit === 'sec' ? 'sec' : target.unit === 'min' ? 'min' : lib?.tipo === 'sec' || lib?.tipo === 'min' ? lib.tipo : lib?.tipo ?? 'kg';
-        return {
-          ex: lib?.id ?? null,
-          nome: base,
-          dettaglio: String(e.dettaglio ?? (paren ? paren[2] : '')),
-          muscoli: String(e.muscoli ?? lib?.muscoli ?? ''),
-          serie, ripetizioni, target, tipo,
-          riposo: Math.max(0, Math.round(Number(e.riposo) || 60)),
-          peso: e.peso != null && !isNaN(parseFloat(e.peso)) ? parseFloat(String(e.peso).replace(',', '.')) : null,
-          superserie: e.superserie ? String(e.superserie) : '',
-          note: String(e.note ?? ''),
-        };
+        if (!String(e.esercizio ?? e.nome ?? '').trim()) throw new Error(`Nel giorno ${g.nome ?? gi + 1} l'esercizio n° ${ei + 1} non ha il nome.`);
+        return buildItem(e);
       }),
     };
   });
