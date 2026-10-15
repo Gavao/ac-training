@@ -276,3 +276,9 @@ body.in-workout #toast { bottom: calc(var(--nav-h) + var(--rest-h) + env(safe-ar
 .hint { display: grid; gap: 2px; margin: 0 0 12px; padding: 12px 14px; border-radius: 14px; background: var(--panel-2); border-left: 4px solid var(--warn); }
 .hint b { color: var(--warn); }
 .hint span { color: var(--muted); font-size: 13px; }
+
+/* Modifica di un allenamento salvato */
+.edit-item { margin: 12px 0; padding: 10px; border-radius: 12px; background: var(--panel-2); }
+.edit-item > b { display: block; margin-bottom: 6px; }
+.edit-item .set { background: var(--panel); }
+.icon.small { width: 34px; height: 34px; font-size: 14px; }

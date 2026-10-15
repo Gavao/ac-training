@@ -283,6 +283,8 @@ function toggleSet(i, si) {
   if (s.done) {
     if (it.tipo === 'sec' || it.tipo === 'min') s.val ??= it.target.min;
     else s.reps ??= it.target.max;
+    // Senza peso la serie conta 0 kg e falsa record e consigli: si avvisa (si può correggere anche dopo).
+    if (it.tipo === 'kg' && s.kg == null) toast('Serie segnata senza peso: scrivi i kg, servono per i progressi.');
     const next = it.sets[si + 1];
     if (next && !next.done) {   // la serie dopo parte con lo stesso peso
       if (next.kg == null) next.kg = s.kg;
@@ -624,8 +626,8 @@ function exerciseProgress(key) {
     ${chart}
     ${weighted ? '<p class="note">Massimale stimato: il peso che riusciresti a sollevare una volta sola, calcolato dalle tue serie (formula di Epley).</p>' : ''}
     <h2>Tutte le volte</h2>
-    ${[...hist].reverse().map(h => `<div class="row static"><span><b>${esc(shortDate(h.session.date))}</b><small>${esc(setsText(h.item))}</small></span>
-      ${weighted ? `<small>${fmt(volumeOf(h.item))} kg</small>` : ''}</div>`).join('')}`;
+    ${[...hist].reverse().map(h => `<button class="row" data-session="${h.session.id}"><span><b>${esc(shortDate(h.session.date))}</b><small>${esc(setsText(h.item))}</small></span>
+      ${weighted ? `<small>${fmt(volumeOf(h.item))} kg</small>` : ''}<span class="chev">›</span></button>`).join('')}`;
 }
 
 function sessionSheet(id) {
@@ -634,8 +636,61 @@ function sessionSheet(id) {
   sheet.innerHTML = `<div class="sheet-head"><div><h2>Allenamento ${esc(s.dayName)}</h2><small>${esc(longDate(s.date))} · ${duration(s.end - s.start)}</small></div>
       <button class="icon" data-close>✕</button></div>
     ${s.items.map(it => `<div class="row static"><span><b>${esc(it.nome)}</b><small>${esc(setsText(it))}</small></span></div>`).join('')}
+    <button class="primary" data-editsession="${s.id}">Modifica pesi e ripetizioni</button>
     <button class="link danger" data-delsession="${s.id}">Elimina questo allenamento</button>`;
-  sheet.showModal();
+  if (!sheet.open) sheet.showModal();
+}
+
+// Modifica di un allenamento già salvato: data, peso e ripetizioni (o secondi/minuti) di ogni serie,
+// serie tolte o aggiunte. Record, grafici e consigli si ricalcolano da soli dai dati corretti.
+let editing = null;   // copia dell'allenamento in modifica
+
+function editSessionSheet(id) {
+  if (id != null) editing = structuredClone(sessions.find(x => x.id === id));
+  if (!editing) return;
+  const s = editing;
+  sheet.innerHTML = `<div class="sheet-head"><div><h2>Modifica allenamento ${esc(s.dayName)}</h2><small>${esc(s.planName)}</small></div>
+      <button class="icon" data-close>✕</button></div>
+    <label class="field"><span>Data</span><input type="date" id="editDate" value="${s.date}" max="${today()}"></label>
+    ${s.items.map((it, i) => `<div class="edit-item"><b>${esc(it.nome)}</b>
+      ${it.sets.map((set, si) => `<div class="set" data-eset="${i}:${si}"><span class="set-n">${si + 1}</span>
+        ${it.tipo === 'sec' || it.tipo === 'min'
+          ? `<input data-ek="val" inputmode="decimal" value="${set.val ?? ''}"><span class="u">${it.tipo === 'sec' ? 'secondi' : 'minuti'}</span>`
+          : `<input data-ek="kg" inputmode="decimal" value="${set.kg || ''}" placeholder="kg"><span class="u">kg ×</span>
+             <input data-ek="reps" inputmode="numeric" value="${set.reps || ''}"><span class="u">rip.</span>`}
+        <button class="icon small" data-edelset="${i}:${si}" aria-label="Togli la serie">✕</button></div>`).join('')}
+      <button class="link" data-eaddset="${i}">+ Serie</button></div>`).join('')}
+    <button class="primary" data-esave>Salva le modifiche</button>
+    <button class="link" data-session="${s.id}">Annulla</button>`;
+  if (!sheet.open) sheet.showModal();
+}
+
+/** Legge i campi della finestra di modifica nella copia (prima di aggiungere/togliere serie o salvare). */
+function readEditFields() {
+  editing.date = $('#editDate')?.value || editing.date;
+  for (const row of sheet.querySelectorAll('[data-eset]')) {
+    const [i, si] = row.dataset.eset.split(':').map(Number);
+    const set = editing.items[i].sets[si];
+    for (const input of row.querySelectorAll('[data-ek]')) set[input.dataset.ek] = num(input.value);
+  }
+}
+
+async function saveEditedSession() {
+  readEditFields();
+  const s = editing;
+  // Serie vuote e esercizi senza serie non contano.
+  for (const it of s.items) {
+    it.sets = it.sets.filter(set => (it.tipo === 'sec' || it.tipo === 'min' ? set.val != null : set.reps != null || set.kg != null))
+      .map(set => (it.tipo === 'sec' || it.tipo === 'min' ? { val: set.val } : { kg: set.kg ?? 0, reps: set.reps ?? 0 }));
+  }
+  s.items = s.items.filter(it => it.sets.length);
+  if (!s.items.length) return toast('Lascia almeno una serie, oppure elimina l\'allenamento.');
+  sessions = sessions.map(x => (x.id === s.id ? s : x)).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
+  await db.put('sessions', s);
+  editing = null;
+  toast('Allenamento aggiornato');
+  sessionSheet(s.id);
+  route();
 }
 
 // ---------------------------------------------------------------------------
@@ -781,7 +836,7 @@ async function restoreBackup(file) {
     plans = data.plans ?? [];
     activeId = data.activeId ?? plans[0]?.id ?? null;
     profile = data.profile ?? profile;
-    sessions = (data.sessions ?? []).sort((a, b) => a.start - b.start);
+    sessions = (data.sessions ?? []).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
     bodyLog = (data.body ?? []).sort((a, b) => a.date.localeCompare(b.date));
     await Promise.all([db.clear('sessions'), db.clear('body')]);
     for (const s of sessions) await db.put('sessions', s);
@@ -923,6 +978,23 @@ document.addEventListener('click', async e => {
   }
   const sess = t.closest('[data-session]');
   if (sess) return sessionSheet(+sess.dataset.session);
+  const editSess = t.closest('[data-editsession]');
+  if (editSess) return editSessionSheet(+editSess.dataset.editsession);
+  const eAdd = t.closest('[data-eaddset]');
+  if (eAdd) {
+    readEditFields();
+    const it = editing.items[+eAdd.dataset.eaddset];
+    it.sets.push({ ...it.sets.at(-1) });
+    return editSessionSheet();
+  }
+  const eDel = t.closest('[data-edelset]');
+  if (eDel) {
+    readEditFields();
+    const [i, si] = eDel.dataset.edelset.split(':').map(Number);
+    editing.items[i].sets.splice(si, 1);
+    return editSessionSheet();
+  }
+  if (t.closest('[data-esave]')) return saveEditedSession();
   const delSess = t.closest('[data-delsession]');
   if (delSess) {
     if (!confirm('Eliminare questo allenamento dallo storico?')) return;
@@ -1022,7 +1094,7 @@ activeId = await getSetting('activePlan', plans[0]?.id ?? null);
 current = await getSetting('current', null);
 profile = await getSetting('profile', { nome: '' });
 lastBackup = await getSetting('lastBackup', null);
-sessions = (await db.all('sessions')).sort((a, b) => a.start - b.start);
+sessions = (await db.all('sessions')).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
 bodyLog = (await db.all('body')).sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
 navigator.storage?.persist?.().catch(() => {});   // chiede al telefono di non cancellare mai i dati dell'app
 route();
