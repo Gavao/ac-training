@@ -44,6 +44,7 @@ let sessions = [];       // allenamenti fatti, dal più vecchio
 let bodyLog = [];        // misurazioni, dalla più vecchia
 let profile = { nome: '' };
 let pickedDay = null;    // giorno scelto a mano nella pagina Oggi (altrimenti quello a rotazione)
+let lastBackup = null;   // data dell'ultimo backup salvato (per ricordarlo ogni tanto)
 
 const activePlan = () => plans.find(p => p.id === activeId) ?? null;
 const savePlans = () => setSetting('plans', plans);
@@ -137,6 +138,7 @@ function todayPage() {
   view.innerHTML = `<header class="top"><div class="brand">AC</div><h1>${greet}</h1></header>
     ${updateBanner()}
     ${running}
+    ${backupReminder()}
     <p class="date">${esc(longDate(today()))} · ${esc(plan.nome)}</p>
     <div class="days">${plan.giorni.map((d, i) => `<button class="chip ${i === di ? 'on' : ''}" data-day="${i}">${esc(d.nome.length <= 2 ? 'Allenamento ' + d.nome : d.nome)}</button>`).join('')}</div>
     ${pickedDay == null ? `<p class="note">${sessions.some(s => s.planId === plan.id)
@@ -157,6 +159,15 @@ function todayPage() {
     }).join('')}</div>
     ${listBlock('Defaticamento', plan.defaticamento)}
     ${current ? '' : `<button class="primary sticky" data-start="${di}">Inizia allenamento ${esc(day.nome)}</button>`}`;
+}
+
+// Promemoria del backup: dopo qualche allenamento, se l'ultimo backup ha più di 2 settimane (o non c'è).
+function backupReminder() {
+  if (sessions.length < 3) return '';
+  const days = lastBackup ? (new Date(today()) - new Date(lastBackup)) / 86400000 : Infinity;
+  if (days < 14) return '';
+  return `<a class="hint" href="#/altro"><b>Fai un backup</b><span>${lastBackup ? `L'ultimo è del ${shortDate(lastBackup)}` : 'Non ne hai ancora fatto uno'}:
+    salvalo su Drive o iCloud, così non perdi allenamenti e misure se cambi telefono.</span></a>`;
 }
 
 const listBlock = (title, items) => (items?.length ? `<details class="box"><summary>${esc(title)}</summary>
@@ -214,7 +225,8 @@ function workoutItem(it, i) {
     <div class="sets">${it.sets.map((s, si) => `<div class="set ${s.done ? 'done' : ''}" data-set="${si}">
       <span class="set-n">${si + 1}</span>
       ${unit
-        ? `<input data-k="val" inputmode="decimal" value="${s.val ?? ''}" placeholder="${it.target.min ?? ''}"><span class="u">${unit}</span>`
+        ? `<input data-k="val" inputmode="decimal" value="${s.val ?? ''}" placeholder="${it.target.min ?? ''}"><span class="u">${unit}</span>
+           ${it.tipo === 'sec' && !s.done ? `<button class="hold" data-hold aria-label="Avvia il cronometro">${hold?.i === i && hold?.si === si ? clock(Math.max(0, Math.ceil((hold.end - Date.now()) / 1000))) : '▶'}</button>` : ''}`
         : `<input data-k="kg" inputmode="decimal" value="${s.kg ?? ''}" placeholder="${it.tipo === 'corpo' ? '+kg' : 'kg'}"><span class="u">kg ×</span>
            <input data-k="reps" inputmode="numeric" value="${s.reps ?? ''}" placeholder="${it.target.max ?? ''}"><span class="u">rip.</span>`}
       <button class="tick" data-done aria-label="Serie fatta">✓</button>
@@ -229,6 +241,38 @@ function tickElapsed() {
   const update = () => { if (el() && current) el().textContent = clock(Math.floor((Date.now() - current.start) / 1000)); };
   update();
   tickElapsed.timer = setInterval(() => (el() ? update() : clearInterval(tickElapsed.timer)), 1000);
+}
+
+// Cronometro per le tenute (plank, plank laterale…): conto alla rovescia dei secondi della serie,
+// alla fine suono e vibrazione, la serie si segna da sola e parte il recupero.
+let hold = null;   // { i, si, end, timer }
+function startHold(i, si) {
+  if (hold) { clearInterval(hold.timer); const same = hold.i === i && hold.si === si; hold = null; if (same) return rerenderWorkout(); }
+  try { audio ??= new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch { /* niente suono */ }
+  const it = current.items[i];
+  const secs = num(it.sets[si].val) ?? it.target.min ?? 30;
+  it.sets[si].val = secs;
+  hold = { i, si, end: Date.now() + secs * 1000 };
+  const btn = () => document.querySelector(`[data-item="${i}"] [data-set="${si}"] [data-hold]`);
+  hold.timer = setInterval(() => {
+    const left = Math.ceil((hold.end - Date.now()) / 1000);
+    if (btn()) btn().textContent = clock(Math.max(0, left));
+    if (left <= 0) {
+      clearInterval(hold.timer);
+      hold = null;
+      navigator.vibrate?.([300, 120, 300]);
+      beep();
+      if (current && !current.items[i].sets[si].done) toggleSet(i, si);
+    }
+  }, 250);
+  rerenderWorkout();
+}
+
+function rerenderWorkout() {
+  if (location.hash !== '#/allenamento') return;   // il cronometro può finire mentre sei su un'altra pagina
+  const y = scrollY;
+  workoutPage();
+  scrollTo(0, y);
 }
 
 /** Segna una serie come fatta (o la riapre), completa i campi vuoti e fa partire il recupero. */
@@ -250,9 +294,7 @@ function toggleSet(i, si) {
     if (!inSuperset) startRest(it.riposo);
   }
   saveCurrent();
-  const y = scrollY;
-  workoutPage();
-  scrollTo(0, y);
+  rerenderWorkout();
 }
 
 async function finishWorkout() {
@@ -455,7 +497,15 @@ async function doImport(text) {
   const msg = $('#importMsg');
   try {
     const plan = parsePlan(text);
-    plans.push(plan);
+    // Stessa scheda aggiornata da Claude: si sostituisce mantenendo l'identità, così la rotazione
+    // dei giorni continua da dove era e la scheda resta quella in uso.
+    const same = plans.find(p => p.nome.trim().toLowerCase() === plan.nome.trim().toLowerCase());
+    if (same && confirm(`Hai già la scheda "${same.nome}". La sostituisco con questa nuova versione?\n(Allenamenti fatti e progressi restano.)`)) {
+      plan.id = same.id;
+      plans = plans.map(p => (p === same ? plan : p));
+    } else {
+      plans.push(plan);
+    }
     if (!activeId) { activeId = plan.id; await setSetting('activePlan', activeId); }
     await savePlans();
     sheet.close();
@@ -668,7 +718,8 @@ function morePage() {
     <h2>Esercizi</h2>
     <a class="row" href="#/libreria"><span><b>Libreria degli esercizi</b><small>${EXERCISES.length} esercizi con foto, spiegazione e consigli</small></span><span class="chev">›</span></a>
     <h2>Backup</h2>
-    <p class="note">I dati restano solo su questo telefono. Salva ogni tanto una copia: serve se cambi telefono o reinstalli l'app.</p>
+    <p class="note">I dati restano solo su questo telefono. Salva ogni tanto una copia: serve se cambi telefono o reinstalli l'app.
+      ${lastBackup ? `Ultimo backup: ${shortDate(lastBackup)}.` : 'Non hai ancora fatto un backup.'}</p>
     <div class="list">
       <button class="row" data-backup><span><b>${native ? 'Salva e condividi il backup' : 'Salva il backup'}</b><small>su Drive, email, iCloud o dove preferisci</small></span></button>
       <button class="row" data-restore><span><b>Ripristina da un backup</b><small>sostituisce i dati di questo telefono</small></span></button>
@@ -705,6 +756,8 @@ async function backupJson() {
 async function saveBackup() {
   const json = await backupJson();
   const name = `ac-training-backup-${today()}.json`;
+  lastBackup = today();
+  setSetting('lastBackup', lastBackup);
   if (native?.shareBackup) {
     if (!native.shareBackup(json)) toast('Backup non riuscito');
     return;
@@ -801,6 +854,10 @@ document.addEventListener('click', async e => {
   const day = t.closest('[data-day]');
   if (day) { pickedDay = +day.dataset.day; todayPage(); return; }
   if (t.closest('[data-start]')) { startWorkout(+t.closest('[data-start]').dataset.start); return; }
+  if (t.closest('[data-hold]')) {
+    startHold(+t.closest('[data-item]').dataset.item, +t.closest('[data-set]').dataset.set);
+    return;
+  }
   if (t.closest('[data-done]')) {
     const i = +t.closest('[data-item]').dataset.item, si = +t.closest('[data-set]').dataset.set;
     keepAwake();
@@ -964,8 +1021,10 @@ plans = await getSetting('plans', []);
 activeId = await getSetting('activePlan', plans[0]?.id ?? null);
 current = await getSetting('current', null);
 profile = await getSetting('profile', { nome: '' });
+lastBackup = await getSetting('lastBackup', null);
 sessions = (await db.all('sessions')).sort((a, b) => a.start - b.start);
 bodyLog = (await db.all('body')).sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
+navigator.storage?.persist?.().catch(() => {});   // chiede al telefono di non cancellare mai i dati dell'app
 route();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 checkWebUpdate();

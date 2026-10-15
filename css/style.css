@@ -265,3 +265,14 @@ body.in-workout #toast { bottom: calc(var(--nav-h) + var(--rest-h) + env(safe-ar
 .chart [data-tip] { cursor: pointer; }
 .chart-max, .chart-axis small { font-size: 11px; color: var(--muted); }
 .chart-axis { display: flex; justify-content: space-between; margin-top: 4px; }
+
+/* Cronometro delle tenute (plank…) */
+.hold {
+  flex: none; min-width: 52px; height: 46px; padding: 0 8px; border-radius: 12px; border: 1.5px solid var(--accent);
+  background: none; color: var(--accent); font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+
+/* Promemoria (backup) */
+.hint { display: grid; gap: 2px; margin: 0 0 12px; padding: 12px 14px; border-radius: 14px; background: var(--panel-2); border-left: 4px solid var(--warn); }
+.hint b { color: var(--warn); }
+.hint span { color: var(--muted); font-size: 13px; }
