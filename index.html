@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0d1712">
+  <!-- iPhone: si installa da Safari con Condividi → Aggiungi alla schermata Home -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AC Training">
+  <title>AC Training</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main id="view"></main>
+
+  <!-- Recupero tra le serie: resta visibile sopra la barra in basso finché non finisce -->
+  <div id="rest" hidden>
+    <div class="rest-info"><small>Recupero</small><b id="restTime">0:00</b></div>
+    <div class="rest-bar"><i id="restFill"></i></div>
+    <button data-rest="-15">−15</button>
+    <button data-rest="15">+15</button>
+    <button data-rest="skip">Salta</button>
+  </div>
+
+  <nav id="nav">
+    <a href="#/" data-tab="today"><svg viewBox="0 0 24 24"><path d="M3 10v4M6 7v10M18 7v10M21 10v4M6 12h12"/></svg>Oggi</a>
+    <a href="#/schede" data-tab="plans"><svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>Schede</a>
+    <a href="#/progressi" data-tab="progress"><svg viewBox="0 0 24 24"><path d="M4 19h16M5 15l4-4 4 3 6-7"/></svg>Progressi</a>
+    <a href="#/corpo" data-tab="body"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><path d="M12 8v7M7 10h10M9.5 21l2.5-6 2.5 6"/></svg>Corpo</a>
+    <a href="#/altro" data-tab="more"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>Altro</a>
+  </nav>
+
+  <dialog id="sheet"></dialog>
+  <div id="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
