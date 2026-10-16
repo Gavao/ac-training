@@ -320,3 +320,9 @@ body.in-workout #toast { bottom: calc(var(--nav-h) + var(--rest-h) + env(safe-ar
 .set-tools .swap { margin-left: auto; }
 .check { display: flex; gap: 8px; align-items: center; margin: 4px 2px 12px; color: var(--muted); font-size: 13px; }
 .check input { accent-color: var(--accent); width: 18px; height: 18px; }
+.swap-tips { padding: 10px 12px; margin-bottom: 10px; border-radius: 12px; background: var(--panel-2); border-left: 3px solid var(--lime); font-size: 13px; }
+.swap-tips b { color: var(--lime); }
+.swap-tips ul { margin: 4px 0 0; padding-left: 18px; color: var(--text); }
+.swap-row { align-items: flex-start; }
+.swap-row small { line-height: 1.35; }
+.swap-last { color: var(--accent) !important; font-weight: 600; }

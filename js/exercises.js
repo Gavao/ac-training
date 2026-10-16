@@ -845,3 +845,118 @@ export function findExercise(idOrName) {
 }
 
 export const exerciseById = id => EXERCISES.find(e => e.id === id) ?? null;
+
+// ---------------------------------------------------------------------------
+// Sostituzioni: muscolo principale di ogni esercizio (si propongono solo alternative con lo stesso)
+// e un consiglio su quando sceglierlo al posto di un altro.
+// ---------------------------------------------------------------------------
+const SWAP = {
+  'panca-piana': ['petto', 'Il classico con bilanciere: il più pesante, meglio con qualcuno che assiste.'],
+  'panca-piana-manubri': ['petto', 'Stessa spinta della panca con i manubri: più ampiezza, ogni braccio lavora da solo.'],
+  'panca-inclinata-manubri': ['petto', 'Spinta inclinata: lavora di più il petto alto. Con i manubri non serve assistenza.'],
+  'panca-inclinata': ['petto', 'Petto alto con il bilanciere: buona alternativa se le panche piane sono occupate.'],
+  'chest-press': ['petto', 'Alla macchina, movimento guidato: la scelta più sicura se ti alleni da solo.'],
+  'croci-cavi': ['petto', 'Isola il petto senza i tricipiti: carico leggero, meglio come secondo esercizio.'],
+  'croci-manubri': ['petto', 'Isolamento con i manubri: peso leggero e attenzione all\'allungamento.'],
+  'pectoral-machine': ['petto', 'Isolamento guidato: comodo e sicuro, ottimo a fine allenamento.'],
+  'piegamenti': ['petto', 'A corpo libero, si fanno ovunque: se sono troppo facili rallenta la discesa.'],
+  'dip': ['petto', 'Petto basso e tricipiti con il peso del corpo: impegnativo, usa la macchina assistita se serve.'],
+
+  'lat-machine': ['dorso', 'Tirata dall\'alto alla macchina: la base per il dorso, facile da regolare.'],
+  'lat-machine-inversa': ['dorso', 'Come la lat machine, ma con i palmi verso di te lavora di più anche i bicipiti.'],
+  'trazioni': ['dorso', 'Tirata dall\'alto a corpo libero: la più difficile, con l\'assistita va bene a tutti.'],
+  'pulley': ['dorso', 'Tirata orizzontale da seduto: schiena sostenuta, semplice da imparare.'],
+  'rematore-bilanciere': ['dorso', 'Tirata orizzontale libera: molto efficace ma impegna la zona lombare.'],
+  'rematore-manubrio': ['dorso', 'Un braccio alla volta con appoggio sulla panca: schiena protetta, panca quasi sempre libera.'],
+  'pulldown-braccia-tese': ['dorso', 'Isola il gran dorsale senza i bicipiti: utile se le braccia sono già stanche.'],
+
+  'stacco': ['lombari', 'Il più completo per la schiena bassa e le gambe: tecnica prima del carico.'],
+  'iperestensioni': ['lombari', 'Rinforza la schiena bassa con poco carico: sicuro anche per chi inizia.'],
+
+  'shoulder-press-manubri': ['spalle', 'Spinta sopra la testa con i manubri: movimento naturale per le spalle.'],
+  'military-press': ['spalle', 'Con il bilanciere in piedi: carico maggiore, serve l\'addome contratto.'],
+  'shoulder-press-macchina': ['spalle', 'Alla macchina: guidata e sicura, ottima se sei stanco o alle prime armi.'],
+  'alzate-laterali': ['spalle', 'Isola la parte laterale delle spalle (quella che le "allarga"): peso leggero.'],
+
+  'face-pull': ['spalle posteriori', 'Al cavo con la corda: spalle posteriori e postura, carico leggero.'],
+  'alzate-posteriori': ['spalle posteriori', 'Con i manubri a busto piegato: bastano due manubri leggeri.'],
+  'pectoral-inversa': ['spalle posteriori', 'Alla macchina, seduto al contrario: il modo più semplice per le spalle posteriori.'],
+
+  'curl-manubri': ['bicipiti', 'Il curl più versatile: si fa ovunque, un braccio alla volta o insieme.'],
+  'curl-bilanciere': ['bicipiti', 'Con il bilanciere si carica di più; quello sagomato è più comodo per i polsi.'],
+  'curl-martello': ['bicipiti', 'Presa neutra: lavora anche gli avambracci, più delicato per i polsi.'],
+
+  'push-down': ['tricipiti', 'Al cavo con corda o barra: il più semplice e sicuro per i tricipiti.'],
+  'french-press': ['tricipiti', 'Sdraiato con il bilanciere: molto efficace, ma con peso moderato.'],
+  'estensioni-sopra-testa': ['tricipiti', 'Con un manubrio sopra la testa: allunga bene il tricipite, serve solo un manubrio.'],
+  'estensioni-corda-sopra-testa': ['tricipiti', 'Come le estensioni con manubrio ma al cavo: tensione costante.'],
+  'kickback-tricipiti': ['tricipiti', 'Con un manubrio leggero, un braccio alla volta: ottimo per finire.'],
+  'dip-panca': ['tricipiti', 'Tra due panche con il peso del corpo: si fa ovunque, la difficoltà la regoli con le gambe.'],
+
+  'squat': ['quadricipiti', 'Il re delle gambe con il bilanciere: serve il rack e una buona tecnica.'],
+  'goblet-squat': ['quadricipiti', 'Squat con un manubrio al petto: più facile da imparare, basta un manubrio.'],
+  'leg-press': ['quadricipiti', 'Alla macchina, schiena appoggiata: carichi alti in sicurezza.'],
+  'hack-squat': ['quadricipiti', 'Squat guidato alla macchina: schiena protetta, cosce molto coinvolte.'],
+  'affondi': ['quadricipiti', 'Una gamba alla volta con i manubri: lavora anche equilibrio e glutei.'],
+  'leg-extension': ['quadricipiti', 'Isola i quadricipiti alla macchina: carico leggero, ottimo dopo un esercizio base.'],
+
+  'leg-curl': ['femorali', 'Femorali alla macchina da seduto: semplice e sicuro.'],
+  'leg-curl-sdraiato': ['femorali', 'Come il leg curl ma sdraiato: buona alternativa se la macchina seduta è occupata.'],
+  'stacco-rumeno': ['femorali', 'Femorali e glutei con il bilanciere: schiena dritta, si sente molto l\'allungamento.'],
+  'stacco-rumeno-manubri': ['femorali', 'Come lo stacco rumeno ma con i manubri: più facile da controllare.'],
+
+  'hip-thrust': ['glutei', 'Il più efficace per i glutei: bilanciere sul bacino o macchina apposita.'],
+  'ponte-glutei': ['glutei', 'Come l\'hip thrust ma a terra: più semplice, si fa anche con un manubrio.'],
+  'abductor': ['glutei', 'Alla macchina per la parte esterna dei glutei: carico leggero, tante ripetizioni.'],
+  'kickback-cavo': ['glutei', 'Al cavo basso, una gamba alla volta: isola il gluteo, peso leggero.'],
+  'slanci-glutei': ['glutei', 'A quattro zampe a corpo libero: si fa ovunque, con una cavigliera diventa più duro.'],
+  'squat-sumo': ['glutei', 'Squat a gambe larghe con un manubrio: glutei e interno coscia.'],
+  'affondi-indietro': ['glutei', 'Passo indietro con i manubri: più glutei e meno ginocchia degli affondi in avanti.'],
+  'affondi-bulgari': ['glutei', 'Piede dietro sulla panca: tra i migliori per i glutei, impegnativo per l\'equilibrio.'],
+  'step-up': ['glutei', 'Salita su una panca con i manubri: semplice, una gamba alla volta.'],
+
+  'polpacci': ['polpacci', 'Alla macchina in piedi o con un manubrio su un gradino.'],
+
+  'plank': ['addome', 'Tenuta sugli avambracci: tutto il core, senza carico sulla schiena.'],
+  'plank-laterale': ['addome', 'Tenuta di fianco: lavora soprattutto i fianchi (obliqui).'],
+  'crunch': ['addome', 'Il classico a terra: movimento corto, senza tirare il collo.'],
+  'crunch-macchina': ['addome', 'Alla macchina: si può aggiungere carico, schiena sostenuta.'],
+  'crunch-inverso': ['addome', 'Ginocchia al petto: lavora di più la parte bassa dell\'addome.'],
+  'crunch-cavi': ['addome', 'In ginocchio al cavo: si può caricare, ottimo per progredire.'],
+  'russian-twist': ['addome', 'Rotazioni da seduto: lavora i fianchi (obliqui).'],
+  'dead-bug': ['addome', 'A terra, braccia e gambe alternate: addome profondo, delicato con la schiena.'],
+  'leg-raise': ['addome', 'Appeso alla sbarra: addome basso, impegnativo; a ginocchia piegate è più facile.'],
+  'mountain-climber': ['addome', 'Ginocchia al petto veloci: addome e un po\' di cardio.'],
+
+  'tapis-roulant': ['cardio', 'Camminata in pendenza: brucia molto ed è leggera sulle ginocchia.'],
+  'corsa': ['cardio', 'Corsa sul tapis roulant: più intensa, con impatto sulle articolazioni.'],
+  'cyclette': ['cardio', 'Senza impatto: ottima dopo le gambe o con le ginocchia delicate.'],
+  'ellittica': ['cardio', 'Lavora gambe e braccia senza impatto.'],
+  'vogatore': ['cardio', 'Cardio che lavora anche schiena e gambe.'],
+  'stepper': ['cardio', 'Come salire le scale: impegna molto anche i glutei.'],
+};
+
+// Per gli esercizi fuori libreria il muscolo si capisce dal testo dei "muscoli" della scheda.
+const FOCUS_WORDS = [
+  ['spalle posteriori', /spall\w* posterior|deltoid\w* posterior/], ['glutei', /glute/], ['femorali', /femoral|dietro (delle|della) cosc/],
+  ['quadricipiti', /quadricip|cosce|coscia|gambe/], ['petto', /pett/], ['dorso', /dors|schiena|lat\b/], ['lombari', /lombar/],
+  ['spalle', /spall|deltoid/], ['bicipiti', /bicipit/], ['tricipiti', /tricipit/], ['polpacci', /polpacc/],
+  ['addome', /addom|core|oblicu|fianch/], ['cardio', /cardio/],
+];
+
+/** Muscolo principale di un esercizio della scheda (libreria o testo dei muscoli), o null. */
+export function focusOf(ex, muscoli = '') {
+  if (ex && SWAP[ex]) return SWAP[ex][0];
+  const t = String(muscoli).toLowerCase();
+  return FOCUS_WORDS.find(([, re]) => re.test(t))?.[0] ?? null;
+}
+
+/** Alternative con lo stesso muscolo principale, ognuna con il consiglio su quando sceglierla. */
+export function alternatives(ex, muscoli = '') {
+  const focus = focusOf(ex, muscoli);
+  if (!focus) return { focus: null, list: [] };
+  return {
+    focus,
+    list: EXERCISES.filter(e => e.id !== ex && SWAP[e.id]?.[0] === focus).map(e => ({ ...e, consiglio: SWAP[e.id][1] })),
+  };
+}

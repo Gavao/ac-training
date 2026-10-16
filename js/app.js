@@ -1,7 +1,7 @@
 // AC Training: schede di allenamento importate, registro dei pesi serie per serie, progressi e misure.
 // Tutti i dati restano nel telefono (IndexedDB); il backup è un file che si salva o si condivide.
 import { db, getSetting, setSetting } from './db.js';
-import { EXERCISES, GROUPS, exerciseById } from './exercises.js';
+import { EXERCISES, GROUPS, exerciseById, alternatives } from './exercises.js';
 import { parsePlan, exKey, CLAUDE_PROMPT, buildItem, planToJson } from './plan.js';
 import { bars, lines } from './charts.js';
 import { APP_VERSION } from './version.js';
@@ -603,40 +603,44 @@ function pickExercise(di, i = null) {
 }
 
 // ---------------------------------------------------------------------------
-// Cambio di un esercizio durante l'allenamento (es. macchina occupata): prima quelli che lavorano
-// gli stessi muscoli. Vale per questo allenamento; con la spunta anche per la scheda.
+// Cambio di un esercizio durante l'allenamento (es. macchina occupata): solo alternative che lavorano
+// lo stesso muscolo principale, ognuna con il consiglio su quando sceglierla e il peso dell'ultima volta.
+// Vale per questo allenamento; con la spunta anche per la scheda.
 // ---------------------------------------------------------------------------
 let swapIndex = null;
 
 function swapSheet(i) {
   swapIndex = i;
   const it = current.items[i];
-  sheet.innerHTML = `<div class="sheet-head"><div><h2>Cambia esercizio</h2><small>al posto di ${esc(it.nome)}</small></div>
+  const { focus, list } = alternatives(it.ex, it.muscoli);
+  const row = e => {
+    const last = historyOf(e.id)[0];
+    return `<button class="row pick swap-row" data-swappick="${e.id}">${thumb({ ex: e.id })}
+      <span><b>${esc(e.nome)}</b><small>${esc(e.consiglio)}</small>
+        ${last ? `<small class="swap-last">Ultima volta: ${esc(setsText(last.item))}</small>` : ''}</span></button>`;
+  };
+  // Prima quelli che hai già fatto (sai già che peso usare), poi gli altri.
+  const sorted = [...list].sort((a, b) => (historyOf(b.id).length > 0) - (historyOf(a.id).length > 0));
+  sheet.innerHTML = `<div class="sheet-head"><div><h2>Cambia esercizio</h2><small>al posto di ${esc(it.nome)}${focus ? ` · ${esc(focus)}` : ''}</small></div>
       <button class="icon" data-close aria-label="Chiudi">✕</button></div>
+    <div class="swap-tips"><b>Come scegliere</b>
+      <ul><li>Stesse serie, ripetizioni e recupero della scheda: cambia solo l'attrezzo.</li>
+        <li>La prima volta parti più leggero: un esercizio nuovo si sente di più.</li>
+        <li>Macchina occupata? Le versioni con manubri o ai cavi sono quasi sempre libere.</li></ul></div>
     <label class="check"><input type="checkbox" id="swapPlan"> Cambialo anche nella scheda, per le prossime volte</label>
-    <input type="search" id="swapSearch" placeholder="Cerca un altro esercizio" autocomplete="off">
-    <div id="swapList">${swapList('')}</div>`;
+    ${sorted.length ? `<h3>Altri esercizi per ${esc(focus)}</h3>${sorted.map(row).join('')}`
+      : `<p class="note">Non so che muscolo lavora "${esc(it.nome)}": cerca un esercizio da usare al suo posto.</p>
+        <input type="search" id="swapSearch" placeholder="Cerca un esercizio" autocomplete="off"><div id="swapList"></div>`}`;
   sheet.showModal();
 }
 
+// Solo per gli esercizi di cui non si conosce il muscolo (fuori libreria e senza "muscoli" nella scheda).
 function swapList(q) {
-  const it = current.items[swapIndex];
-  const lib = libOf(it);
+  if (!q) return '';
   const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-  const row = e => `<button class="row pick" data-swappick="${e.id}">${thumb({ ex: e.id })}
-    <span><b>${esc(e.nome)}</b><small>${esc(e.muscoli)}</small></span></button>`;
-  if (q) {
-    const found = EXERCISES.filter(e => [e.nome, e.muscoli, e.gruppo, ...e.alias].some(t => norm(t).includes(norm(q))));
-    return `<button class="row pick" data-swapfree><span><b>Usa "${esc(q)}"</b><small>esercizio non in libreria</small></span></button>
-      ${found.map(row).join('') || '<p class="note">Nessun esercizio in libreria con questo nome.</p>'}`;
-  }
-  // Simili: stesso gruppo e almeno un muscolo in comune vengono prima, poi il resto del gruppo.
-  const muscles = new Set((lib?.muscoli ?? it.muscoli ?? '').toLowerCase().split(/,\s*/).map(m => m.split(' ')[0]));
-  const shared = e => e.muscoli.toLowerCase().split(/,\s*/).some(m => muscles.has(m.split(' ')[0]));
-  const group = lib?.gruppo;
-  const similar = EXERCISES.filter(e => e.id !== lib?.id && (e.gruppo === group || shared(e)))
-    .sort((a, b) => shared(b) - shared(a) || (b.gruppo === group) - (a.gruppo === group));
-  return `<h3>Simili</h3>${similar.map(row).join('') || '<p class="note">Cerca qui sopra un esercizio.</p>'}`;
+  const found = EXERCISES.filter(e => [e.nome, e.muscoli, e.gruppo, ...e.alias].some(t => norm(t).includes(norm(q))));
+  return `<button class="row pick" data-swapfree><span><b>Usa "${esc(q)}"</b><small>esercizio non in libreria</small></span></button>
+    ${found.map(e => `<button class="row pick" data-swappick="${e.id}">${thumb({ ex: e.id })}<span><b>${esc(e.nome)}</b><small>${esc(e.muscoli)}</small></span></button>`).join('')}`;
 }
 
 async function swapExercise(lib, freeName = null) {
