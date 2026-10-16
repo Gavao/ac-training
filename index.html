@@ -27,6 +27,17 @@
     <button data-rest="skip">Salta</button>
   </div>
 
+  <!-- Timer dei blocchi a tempo (EMOM, AMRAP, For time, Tabata, intervalli): a tutto schermo -->
+  <div id="timer" hidden>
+    <div class="timer-top"><span id="tmTitle"></span><button class="icon" data-tm="close" aria-label="Riduci">⌄</button></div>
+    <div class="timer-phase" id="tmPhase"></div>
+    <div class="timer-clock" id="tmClock">0:00</div>
+    <div class="timer-round" id="tmRound"></div>
+    <div class="timer-bar"><i id="tmBar"></i></div>
+    <div class="timer-ex" id="tmEx"></div>
+    <div class="timer-actions" id="tmActions"></div>
+  </div>
+
   <nav id="nav">
     <a href="#/" data-tab="today"><svg viewBox="0 0 24 24"><path d="M3 10v4M6 7v10M18 7v10M21 10v4M6 12h12"/></svg>Oggi</a>
     <a href="#/schede" data-tab="plans"><svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>Schede</a>

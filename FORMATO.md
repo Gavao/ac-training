@@ -69,6 +69,19 @@ COSA METTERE IN OGNI CAMPO DELL'ESERCIZIO:
 - "superserie": stessa sigla (es. "S1") per gli esercizi da fare di fila senza riposo, altrimenti "".
 - "note": consiglio breve di esecuzione, oppure "".
 
+BLOCCHI A TEMPO (EMOM, AMRAP, For time, Tabata, intervalli, circuito):
+Si mettono nella lista "esercizi" del giorno, nel punto in cui vanno fatti, come oggetto con il campo "blocco" al posto di "esercizio".
+Dentro "esercizi" del blocco ogni esercizio ha solo "esercizio", "ripetizioni" (testo) ed eventualmente "dettaglio". Esempi:
+{ "blocco": "EMOM", "minuti": 12, "ogni": 60, "alterna": false, "esercizi": [ { "esercizio": "Kettlebell swing", "ripetizioni": "12" }, { "esercizio": "Piegamenti", "ripetizioni": "8" } ], "note": "" }
+{ "blocco": "AMRAP", "minuti": 15, "esercizi": [ { "esercizio": "Affondi", "ripetizioni": "10 per gamba" }, { "esercizio": "Crunch", "ripetizioni": "15" } ] }
+{ "blocco": "For time", "giri": 3, "cap": 20, "esercizi": [ { "esercizio": "Goblet squat", "ripetizioni": "15" }, { "esercizio": "Burpee", "ripetizioni": "10" } ] }
+{ "blocco": "Tabata", "giri": 8, "lavoro": 20, "pausa": 10, "esercizi": [ { "esercizio": "Mountain climber", "ripetizioni": "" } ] }
+{ "blocco": "Intervalli", "giri": 10, "lavoro": 40, "pausa": 20, "esercizi": [ { "esercizio": "Cyclette", "ripetizioni": "veloce" } ] }
+{ "blocco": "Circuito", "giri": 3, "recupero": 90, "esercizi": [ { "esercizio": "Step up su panca", "ripetizioni": "10 per gamba" }, { "esercizio": "Plank", "ripetizioni": "30 secondi" } ] }
+- "minuti": durata (EMOM, AMRAP). "ogni": secondi tra un giro e l'altro dell'EMOM (60 = ogni minuto, 120 = ogni 2 minuti).
+- "alterna": true se nell'EMOM gli esercizi si alternano un minuto ciascuno; false se si fanno tutti ogni minuto.
+- "giri": numero di giri. "lavoro" e "pausa": secondi (Tabata, intervalli). "recupero": secondi di pausa a fine giro (circuito). "cap": minuti massimi (For time).
+
 ALTRO:
 - "riscaldamento", "defaticamento", "regole" e "note" sono liste di frasi (testo semplice, non oggetti).
 - Se c'è una scheda leggera (es. per i giorni di ciclo), aggiungila come altro elemento di "giorni" con "nome": "Leggera".

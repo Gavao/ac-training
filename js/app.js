@@ -1,8 +1,8 @@
 // AC Training: schede di allenamento importate, registro dei pesi serie per serie, progressi e misure.
 // Tutti i dati restano nel telefono (IndexedDB); il backup è un file che si salva o si condivide.
 import { db, getSetting, setSetting } from './db.js';
-import { EXERCISES, GROUPS, exerciseById, alternatives } from './exercises.js';
-import { parsePlan, exKey, CLAUDE_PROMPT, buildItem, planToJson } from './plan.js';
+import { EXERCISES, GROUPS, FOCUSES, exerciseById, alternatives, setCustomExercises } from './exercises.js';
+import { parsePlan, exKey, CLAUDE_PROMPT, buildItem, buildBlock, planToJson, BLOCK_MODES, parseBlockLine } from './plan.js';
 import { bars, lines } from './charts.js';
 import { APP_VERSION } from './version.js';
 
@@ -54,12 +54,28 @@ const saveCurrent = () => setSetting('current', current);
 // Libreria e storia degli esercizi
 // ---------------------------------------------------------------------------
 const libOf = item => (item?.ex ? exerciseById(item.ex) : null);
-const imgSrc = (lib, n = 0) => `img/ex/${lib.img}/${n}.jpg`;
+// Foto: quella scattata per un esercizio creato da te, altrimenti le due dell'archivio (inizio e fine).
+const hasImg = lib => !!(lib?.foto || lib?.img);
+const imgSrc = (lib, n = 0) => lib.foto ?? `img/ex/${lib.img}/${n}.jpg`;
 const DUMBBELL = '<svg viewBox="0 0 24 24"><path d="M3 10v4M6 7v10M18 7v10M21 10v4M6 12h12"/></svg>';
+const STOPWATCH = '<svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6M12 2v3"/></svg>';
 const thumb = item => {
+  if (item?.kind === 'blocco') return `<span class="thumb block">${STOPWATCH}</span>`;
   const lib = libOf(item);
-  return `<span class="thumb">${lib ? `<img src="${imgSrc(lib)}" alt="" loading="lazy">` : DUMBBELL}</span>`;
+  return `<span class="thumb">${hasImg(lib) ? `<img src="${imgSrc(lib)}" alt="" loading="lazy">` : DUMBBELL}</span>`;
 };
+
+/** Esercizi di un blocco a tempo in una riga: "12 Kettlebell swing · 8 Piegamenti". */
+const blockSummary = b => b.esercizi.map(x => `${x.ripetizioni ? x.ripetizioni + ' ' : ''}${x.nome}`).join(' · ');
+
+/** Risultato di un blocco a tempo: giri dell'AMRAP, tempo del For time, giri fatti negli altri. */
+function blockResultText(item) {
+  const r = item.result ?? {};
+  if (item.modo === 'amrap') return `${plural(r.giri ?? 0, 'giro', 'giri')}${r.extra ? ` + ${r.extra} rip.` : ''}`;
+  if (item.modo === 'fortime') return r.finito === false ? `non finito in ${clock(r.tempo ?? 0)}` : `tempo ${clock(r.tempo ?? 0)}`;
+  if (item.modo === 'circuito') return `${plural(item.sets.length, 'giro', 'giri')} completati`;
+  return r.completato === false ? `fermato al giro ${r.al ?? (r.giri ?? 0) + 1}${r.di ? ` di ${r.di}` : ''}` : 'completato';
+}
 
 /** Le volte in cui è stato fatto un esercizio, dalla più recente: [{ session, item }]. */
 function historyOf(key) {
@@ -77,6 +93,7 @@ const volumeOf = item => item.sets.reduce((a, s) => a + (s.kg ?? 0) * (s.reps ??
 
 /** Riassunto di una volta: "40 kg × 12, 12, 10" oppure "30 s, 30 s" o "10 min". */
 function setsText(item) {
+  if (item.tipo === 'blocco') return blockResultText(item);
   if (item.tipo === 'sec') return item.sets.map(s => `${fmt(s.val)} s`).join(', ');
   if (item.tipo === 'min') return item.sets.map(s => `${fmt(s.val)} min`).join(', ');
   if (item.tipo === 'corpo' && !item.sets.some(s => s.kg)) return `${item.sets.map(s => s.reps ?? '—').join(', ')} ripetizioni`;
@@ -150,6 +167,11 @@ function todayPage() {
     <div class="ex-list">${day.esercizi.map((it, i) => {
       const last = historyOf(exKey(it))[0];
       const tip = suggestion(it);
+      if (it.kind === 'blocco') {
+        return `<button class="ex-card block" data-info="${di}:${i}">${thumb(it)}
+          <span class="ex-body"><b>${esc(it.nome)}</b><span class="ex-target">${esc(blockSummary(it))}</span>
+            ${last ? `<span class="ex-last">Ultima volta: ${esc(setsText(last.item))}</span>` : ''}</span></button>`;
+      }
       return `<button class="ex-card" data-info="${di}:${i}">
         ${thumb(it)}
         <span class="ex-body"><b>${esc(it.nome)}</b>${it.dettaglio ? `<small>${esc(it.dettaglio)}</small>` : ''}
@@ -183,6 +205,11 @@ function startWorkout(di) {
   current = {
     id: Date.now(), planId: plan.id, planName: plan.nome, dayIndex: di, dayName: day.nome, date: today(), start: Date.now(),
     items: day.esercizi.map(it => {
+      // Blocco a tempo: il circuito ha un ✓ per giro, gli altri un solo risultato a fine timer.
+      if (it.kind === 'blocco') {
+        return { ...structuredClone(it), key: exKey(it), result: null, timer: null,
+          sets: Array.from({ length: it.modo === 'circuito' ? it.giri : 1 }, () => ({ done: false })) };
+      }
       const last = historyOf(exKey(it))[0]?.item;
       // Si parte dai pesi della volta scorsa (serie per serie), altrimenti dal peso consigliato.
       const sets = Array.from({ length: it.serie }, (_, i) => {
@@ -212,6 +239,7 @@ function workoutPage() {
 }
 
 function workoutItem(it, i) {
+  if (it.kind === 'blocco') return workoutBlock(it, i);
   const last = historyOf(it.key)[0];
   const tip = suggestion(it);
   const unit = it.tipo === 'sec' ? 'secondi' : it.tipo === 'min' ? 'minuti' : null;
@@ -236,6 +264,30 @@ function workoutItem(it, i) {
     </div>`).join('')}</div>
     <div class="set-tools"><button class="link" data-addset>+ Serie</button>${it.sets.length > 1 ? '<button class="link" data-delset>− Serie</button>' : ''}
       <button class="link swap" data-swap>⇄ Cambia esercizio</button></div>
+  </section>`;
+}
+
+/** Blocco a tempo nell'allenamento: esercizi, risultato dell'ultima volta e timer (o i giri del circuito). */
+function workoutBlock(it, i) {
+  const last = historyOf(it.key)[0];
+  const done = it.sets.every(s => s.done);
+  const exercises = `<div class="block-ex">${it.esercizi.map((x, k) => `<button class="block-ex-row" data-blockex="${i}:${k}">${thumb(x)}
+    <span><b>${esc(x.ripetizioni || '')}</b> ${esc(x.nome)}${x.dettaglio ? ` <small>${esc(x.dettaglio)}</small>` : ''}</span></button>`).join('')}</div>`;
+  const body = it.modo === 'circuito'
+    ? `<div class="sets">${it.sets.map((s, si) => `<div class="set ${s.done ? 'done' : ''}" data-set="${si}">
+        <span class="set-n">${si + 1}</span><span class="round-label">Giro ${si + 1} di ${it.sets.length}</span>
+        <button class="tick" data-done aria-label="Giro fatto">✓</button></div>`).join('')}</div>
+      <p class="note">Recupero ${it.recupero} s a fine giro.</p>`
+    : done
+      ? `<p class="block-result">✓ ${esc(blockResultText(it))}</p><button class="link" data-block-start="${i}">Rifai il blocco</button>`
+      : `<button class="primary block-start" data-block-start="${i}">▶ ${it.timer ? 'Riprendi il timer' : 'Avvia il timer'}</button>`;
+  return `<section class="wo-item block ${done ? 'complete' : ''}" data-item="${i}">
+    <button class="wo-head" data-info="w:${i}">${thumb(it)}<span class="ex-body"><b>${esc(it.nome)}</b>
+      <small>${esc(BLOCK_MODES[it.modo].spiega)}</small></span><span class="info-i">i</span></button>
+    ${last ? `<p class="ex-last">Ultima volta (${shortDate(last.session.date)}): ${esc(setsText(last.item))}</p>` : ''}
+    ${it.note ? `<p class="ex-note">${esc(it.note)}</p>` : ''}
+    ${exercises}
+    ${body}
   </section>`;
 }
 
@@ -310,12 +362,16 @@ async function finishWorkout() {
   const session = {
     id: current.id, date: current.date, planId: current.planId, planName: current.planName,
     dayIndex: current.dayIndex, dayName: current.dayName, start: current.start, end: Date.now(),
-    items: current.items.map(it => ({
-      key: it.key, ex: it.ex, nome: it.nome, tipo: it.tipo,
-      sets: it.sets.filter(s => s.done).map(s => (it.tipo === 'sec' || it.tipo === 'min'
-        ? { val: num(s.val) } : { kg: num(s.kg) ?? 0, reps: num(s.reps) ?? 0 })),
-    })).filter(it => it.sets.length),
+    items: current.items.map(it => (it.kind === 'blocco'
+      ? { key: it.key, ex: null, nome: it.nome, tipo: 'blocco', kind: 'blocco', modo: it.modo, cap: it.cap, minuti: it.minuti,
+        esercizi: it.esercizi, result: it.result, sets: it.sets.filter(s => s.done).map(() => ({})) }
+      : {
+        key: it.key, ex: it.ex, nome: it.nome, tipo: it.tipo,
+        sets: it.sets.filter(s => s.done).map(s => (it.tipo === 'sec' || it.tipo === 'min'
+          ? { val: num(s.val) } : { kg: num(s.kg) ?? 0, reps: num(s.reps) ?? 0 })),
+      })).filter(it => it.sets.length),
   };
+  if (tm) closeTimer();
   const records = newRecords(session);
   sessions.push(session);
   await db.put('sessions', session);
@@ -331,6 +387,14 @@ async function finishWorkout() {
 function newRecords(session) {
   const out = [];
   for (const it of session.items) {
+    if (it.tipo === 'blocco') {   // AMRAP: più giri; For time finito: meno tempo
+      const prev = historyOf(it.key).map(h => h.item.result ?? {});
+      if (!prev.length || !it.result) continue;
+      if (it.modo === 'amrap' && it.result.giri > Math.max(...prev.map(r => r.giri ?? 0))) out.push(`${it.nome}: record di giri, ${it.result.giri}`);
+      const times = prev.filter(r => r.finito).map(r => r.tempo);
+      if (it.modo === 'fortime' && it.result.finito && (!times.length || it.result.tempo < Math.min(...times))) out.push(`${it.nome}: nuovo miglior tempo, ${clock(it.result.tempo)}`);
+      continue;
+    }
     if (it.tipo !== 'kg' && it.tipo !== 'corpo') continue;
     const prev = historyOf(it.key).map(h => h.item);
     if (!prev.length) continue;   // la prima volta non è un record
@@ -442,6 +506,184 @@ function beep() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Timer dei blocchi a tempo. Le fasi (preparazione, minuti dell'EMOM, lavoro e pausa…) si calcolano
+// dal momento di partenza: il timer resta giusto anche se il telefono va in standby o l'app si
+// riapre. Partenza, pause e giri sono salvati nell'allenamento in corso.
+// ---------------------------------------------------------------------------
+const PREP = 10;            // secondi per prepararsi prima di partire
+let tm = null;              // { i, interval, lastK, lastSec }
+const timerBox = $('#timer');
+
+function blockPhases(b) {
+  const n = b.esercizi.length || 1;
+  const out = [{ kind: 'prep', sec: PREP, label: 'Preparati', ex: b.modo === 'emom' && b.alterna ? b.esercizi.slice(0, 1) : b.esercizi.slice(0, b.modo === 'tabata' || b.modo === 'intervalli' ? 1 : n) }];
+  if (b.modo === 'emom') {
+    const rounds = Math.max(1, Math.round((b.minuti * 60) / b.ogni));
+    for (let r = 0; r < rounds; r++) {
+      out.push({ kind: 'work', sec: b.ogni, label: b.ogni === 60 ? `Minuto ${r + 1}` : `Giro ${r + 1}`, round: r + 1, rounds,
+        ex: b.alterna ? [b.esercizi[r % n]] : b.esercizi });
+    }
+  } else if (b.modo === 'tabata' || b.modo === 'intervalli') {
+    for (let r = 0; r < b.giri; r++) {
+      out.push({ kind: 'work', sec: b.lavoro, label: 'Lavoro', round: r + 1, rounds: b.giri, ex: [b.esercizi[r % n]] });
+      if (r < b.giri - 1) out.push({ kind: 'rest', sec: b.pausa, label: 'Pausa', round: r + 1, rounds: b.giri, ex: [b.esercizi[(r + 1) % n]], next: true });
+    }
+  } else if (b.modo === 'amrap') {
+    out.push({ kind: 'work', sec: b.minuti * 60, label: 'Più giri possibili', ex: b.esercizi });
+  } else {
+    out.push({ kind: 'work', sec: (b.cap || 60) * 60, label: 'Il più veloce possibile', ex: b.esercizi, countUp: true });
+  }
+  return out;
+}
+
+const timerElapsed = t => ((t.pausedAt ?? Date.now()) - t.startAt - t.pausedTotal) / 1000;
+
+/** Fase in corso dopo "elapsed" secondi: indice, secondi che mancano e secondi passati nella fase. */
+function phaseAt(phases, elapsed) {
+  let acc = 0;
+  for (let k = 0; k < phases.length; k++) {
+    if (elapsed < acc + phases[k].sec) return { k, left: acc + phases[k].sec - elapsed, into: elapsed - acc };
+    acc += phases[k].sec;
+  }
+  return { k: phases.length, left: 0, into: 0 };
+}
+
+/** Notifica sul telefono Android (app chiusa): conto alla rovescia della fase in corso. */
+function timerNative(title, label, endMs) {
+  if (native?.timerStart) native.timerStart(endMs, title, label);
+  else native?.restStart?.(endMs, `${title} · ${label}`);
+}
+
+function openTimer(i) {
+  const it = current.items[i];
+  if (it.sets[0].done) {   // "Rifai il blocco"
+    it.sets[0].done = false;
+    it.result = null;
+    it.timer = null;
+  }
+  it.timer ??= { startAt: Date.now(), pausedAt: null, pausedTotal: 0, giri: 0 };
+  try { audio ??= new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch { /* niente suono */ }
+  stopRest();
+  keepAwake();
+  saveCurrent();
+  clearInterval(tm?.interval);
+  tm = { i, lastK: -1, lastSec: -1 };
+  tm.interval = setInterval(renderTimer, 200);
+  timerBox.hidden = false;
+  document.body.classList.add('timer-open');
+  renderTimer();
+}
+
+function renderTimer() {
+  const it = current?.items[tm?.i];
+  if (!it?.timer) { closeTimer(); return; }
+  const t = it.timer;
+  const phases = blockPhases(it);
+  const total = phases.reduce((a, p) => a + p.sec, 0);
+  const elapsed = timerElapsed(t);
+  const p = phaseAt(phases, elapsed);
+  if (p.k >= phases.length) return finishBlock(true);
+  const ph = phases[p.k];
+  if (tm.lastK !== p.k) {   // cambio di fase: bip lungo, e la notifica Android segue la nuova fase
+    if (tm.lastK !== -1 && !t.pausedAt) beepOnce(ph.kind === 'rest' ? 660 : 1175, 0.45);
+    tm.lastK = p.k;
+    // Ad app chiusa la notifica conta fino alla fine di tutto il blocco (l'avviso finale arriva lì).
+    if (!t.pausedAt) timerNative(it.nome, `${ph.label}${ph.round ? ` · giro ${ph.round} di ${ph.rounds}` : ''}`, Date.now() + (total - elapsed) * 1000);
+  }
+  const sec = Math.ceil(p.left);
+  if (!t.pausedAt && sec <= 3 && sec >= 1 && sec !== tm.lastSec && !ph.countUp) beepOnce(880, 0.12);   // 3, 2, 1
+  tm.lastSec = sec;
+  timerBox.className = `tm-${t.pausedAt ? 'paused' : ph.kind}`;
+  $('#tmTitle').textContent = it.nome;
+  $('#tmPhase').textContent = t.pausedAt ? 'In pausa' : ph.label;
+  $('#tmClock').textContent = ph.countUp ? clock(Math.floor(p.into)) : clock(sec);
+  $('#tmRound').textContent = it.modo === 'amrap' ? `Giri fatti: ${t.giri}`
+    : it.modo === 'fortime' ? (ph.kind === 'prep' ? '' : `Tempo massimo ${it.cap}'`)
+    : ph.round ? `Giro ${ph.round} di ${ph.rounds}` : '';
+  $('#tmBar').style.width = `${Math.min(100, (elapsed / total) * 100)}%`;
+  const exHtml = `${ph.next ? '<small>Prossimo</small>' : ''}${ph.ex.map(x => `<div><b>${esc(x.ripetizioni || '')}</b> ${esc(x.nome)}</div>`).join('')}`;
+  if (tm.exHtml !== exHtml) { $('#tmEx').innerHTML = exHtml; tm.exHtml = exHtml; }
+  const actions = `${it.modo === 'amrap' && ph.kind !== 'prep' ? '<button class="tm-big" data-tm="plus">+1 giro</button><button data-tm="minus">−1</button>' : ''}
+    ${it.modo === 'fortime' && ph.kind !== 'prep' ? '<button class="tm-big" data-tm="done">Fatto!</button>' : ''}
+    <button data-tm="pause">${t.pausedAt ? '▶ Riprendi' : '❚❚ Pausa'}</button><button data-tm="stop">Termina</button>`;
+  if (tm.actions !== actions) { $('#tmActions').innerHTML = actions; tm.actions = actions; }
+}
+
+/** Fine del blocco: naturale (tempo scaduto) o con "Fatto!"/"Termina". Il risultato va nell'allenamento. */
+function finishBlock(natural, manual = null) {
+  const it = current.items[tm.i];
+  const phases = blockPhases(it);
+  const p = phaseAt(phases, timerElapsed(it.timer));
+  const ph = phases[Math.min(p.k, phases.length - 1)];
+  if (it.modo === 'amrap') it.result = { giri: it.timer.giri };
+  else if (it.modo === 'fortime') it.result = manual === 'done' ? { tempo: Math.round(p.into), finito: true } : { tempo: Math.round(natural ? it.cap * 60 : p.into), finito: false };
+  else it.result = natural ? { completato: true } : { completato: false, giri: Math.max(0, (ph.round ?? 1) - 1), al: ph.round ?? 1, di: ph.rounds ?? null };
+  it.sets[0].done = true;
+  it.timer = null;
+  if (natural || manual === 'done') alarm();
+  saveCurrent();
+  closeTimer();
+  toast(`${it.nome}: ${blockResultText(it)}`);
+}
+
+function closeTimer() {
+  clearInterval(tm?.interval);
+  tm = null;
+  timerBox.hidden = true;
+  document.body.classList.remove('timer-open');
+  native?.restStop?.();
+  rerenderWorkout();
+}
+
+function beepOnce(freq, dur) {
+  if (!audio) return;
+  const o = audio.createOscillator(), g = audio.createGain(), at = audio.currentTime + 0.01;
+  o.type = 'square';
+  o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(0.8, at + 0.01);
+  g.gain.setValueAtTime(0.8, at + dur - 0.04);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  o.connect(g).connect(audio.destination);
+  o.start(at);
+  o.stop(at + dur + 0.02);
+}
+
+timerBox.addEventListener('click', e => {
+  const b = e.target.closest('[data-tm]');
+  if (!b || !tm) return;
+  const it = current.items[tm.i];
+  const t = it.timer;
+  const act = b.dataset.tm;
+  if (act === 'close') {   // il timer continua: si riapre dal blocco
+    clearInterval(tm.interval);
+    tm = null;
+    timerBox.hidden = true;
+    document.body.classList.remove('timer-open');
+    rerenderWorkout();
+    return;
+  }
+  if (act === 'pause') {
+    if (t.pausedAt) { t.pausedTotal += Date.now() - t.pausedAt; t.pausedAt = null; tm.lastK = -1; }
+    else { t.pausedAt = Date.now(); native?.restStop?.(); }
+  }
+  if (act === 'plus') { t.giri++; beepOnce(1320, 0.1); }
+  if (act === 'minus') t.giri = Math.max(0, t.giri - 1);
+  if (act === 'done') return finishBlock(false, 'done');
+  if (act === 'stop') {
+    if (phaseAt(blockPhases(it), timerElapsed(t)).k === 0) {   // ancora nella preparazione: si annulla e basta
+      it.timer = null;
+      saveCurrent();
+      return closeTimer();
+    }
+    if (!confirm('Terminare il blocco adesso? Il risultato si salva con quello fatto fin qui.')) return;
+    return finishBlock(false, 'stop');
+  }
+  saveCurrent();
+  renderTimer();
+});
+
 /** Cosa c'è dopo (per la notifica del recupero): la prossima serie da fare. */
 function nextSetLabel(i, si) {
   const items = current?.items ?? [];
@@ -469,7 +711,24 @@ restBox.addEventListener('click', e => {
 // ---------------------------------------------------------------------------
 // Scheda dell'esercizio: foto animate, spiegazione, consigli, video
 // ---------------------------------------------------------------------------
+/** Scheda di un blocco a tempo: come funziona, gli esercizi (toccandoli si aprono) e i tuoi risultati. */
+function openBlock(b) {
+  const key = b.key ?? exKey(b);
+  const hist = historyOf(key);
+  sheet.innerHTML = `<div class="sheet-head"><div><h2>${esc(b.nome)}</h2><small>${esc(BLOCK_MODES[b.modo].label)}</small></div>
+      <button class="icon" data-close aria-label="Chiudi">✕</button></div>
+    <div class="from-plan"><b>Come funziona</b><p>${esc(BLOCK_MODES[b.modo].spiega)}</p></div>
+    ${b.note ? `<p class="ex-note">${esc(b.note)}</p>` : ''}
+    <h3>Esercizi</h3>
+    <div class="block-ex">${b.esercizi.map((x, k) => `<button class="block-ex-row" data-blocksub="${k}">${thumb(x)}
+      <span><b>${esc(x.ripetizioni || '')}</b> ${esc(x.nome)}</span><span class="chev">›</span></button>`).join('')}</div>
+    ${hist.length ? `<h3>Le tue volte</h3>${hist.slice(0, 6).map(h => `<div class="row static"><span><b>${shortDate(h.session.date)}</b><small>${esc(setsText(h.item))}</small></span></div>`).join('')}` : ''}`;
+  sheet.dataset.block = JSON.stringify(b.esercizi);
+  if (!sheet.open) sheet.showModal();
+}
+
 function openExercise(item) {
+  if (item.kind === 'blocco') return openBlock(item);
   const lib = libOf(item) ?? (item.id ? item : null);
   const nome = item.nome;
   const video = `https://www.youtube.com/results?search_query=${encodeURIComponent(nome + ' esecuzione corretta')}`;
@@ -477,15 +736,17 @@ function openExercise(item) {
   const hist = historyOf(key);
   sheet.innerHTML = `<div class="sheet-head"><div><h2>${esc(nome)}</h2><small>${esc(item.muscoli || lib?.muscoli || '')}</small></div>
       <button class="icon" data-close aria-label="Chiudi">✕</button></div>
-    ${lib ? `<div class="flip"><img src="${imgSrc(lib, 0)}" alt="Posizione di partenza"><img src="${imgSrc(lib, 1)}" alt="Posizione finale"></div>
+    ${lib?.foto ? `<div class="flip single"><img src="${lib.foto}" alt=""></div>`
+      : hasImg(lib) ? `<div class="flip"><img src="${imgSrc(lib, 0)}" alt="Posizione di partenza"><img src="${imgSrc(lib, 1)}" alt="Posizione finale"></div>
       <p class="caption">Le due foto si alternano: partenza e arrivo del movimento.</p>` : ''}
     ${item.dettaglio || item.note ? `<div class="from-plan"><b>Dalla scheda</b>${item.dettaglio ? `<p>${esc(item.dettaglio)}</p>` : ''}${item.note ? `<p>${esc(item.note)}</p>` : ''}</div>` : ''}
     ${lib ? `<h3>Come si fa</h3><ol class="steps">${lib.passi.map(p => `<li>${esc(p)}</li>`).join('')}</ol>
       <h3>Consigli</h3><ul class="tips">${lib.consigli.map(p => `<li>${esc(p)}</li>`).join('')}</ul>`
       : '<p class="note">Questo esercizio non è nella libreria dell\'app: guarda il video per l\'esecuzione.</p>'}
     <a class="video" href="${video}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M10 8.5v7l6-3.5z"/></svg>Guarda un video su YouTube</a>
-    ${hist.length ? `<a class="link-row" href="#/esercizio/${encodeURIComponent(key)}" data-close>I tuoi progressi: ${plural(hist.length, 'volta', 'volte')} ›</a>` : ''}`;
-  sheet.showModal();
+    ${hist.length ? `<a class="link-row" href="#/esercizio/${encodeURIComponent(key)}" data-close>I tuoi progressi: ${plural(hist.length, 'volta', 'volte')} ›</a>` : ''}
+    ${lib?.custom ? `<button class="secondary wide" data-editcustom="${lib.id}">Modifica questo esercizio</button>` : ''}`;
+  if (!sheet.open) sheet.showModal();
 }
 
 sheet.addEventListener('click', e => {
@@ -510,7 +771,7 @@ function plansPage() {
 function planDetail(id) {
   const p = plans.find(x => x.id === id);
   if (!p) { location.hash = '#/schede'; return; }
-  const missing = p.giorni.flatMap(d => d.esercizi).filter(e => !e.ex).length;
+  const missing = p.giorni.flatMap(d => d.esercizi.flatMap(e => (e.kind === 'blocco' ? e.esercizi : [e]))).filter(e => !e.ex).length;
   view.innerHTML = `<header class="top"><a class="back" href="#/schede" aria-label="Indietro">‹</a><h1>${esc(p.nome)}</h1></header>
     ${p.persona || p.obiettivo ? `<p class="note">${esc([p.persona, p.obiettivo].filter(Boolean).join(' · '))}</p>` : ''}
     ${p.id === activeId ? '<p class="badge-line">Questa è la scheda in uso</p>' : `<button class="primary" data-activate="${p.id}">Usa questa scheda</button>`}
@@ -576,13 +837,14 @@ function planEditor() {
       </div>
       <div class="ed-list">${d.esercizi.map((e, i) => `<div class="ed-ex">
         <button class="ed-ex-main" data-editex="${di}:${i}">${thumb(e)}<span class="ex-body"><b>${i + 1}. ${esc(e.nome)}</b>
-          <span class="ex-target">${e.serie} × ${esc(e.ripetizioni)} · ${e.riposo} s${e.superserie ? ` · ${esc(e.superserie)}` : ''}</span>
+          <span class="ex-target">${e.kind === 'blocco' ? esc(blockSummary(e)) : `${e.serie} × ${esc(e.ripetizioni)} · ${e.riposo} s${e.superserie ? ` · ${esc(e.superserie)}` : ''}`}</span>
           ${e.dettaglio ? `<small>${esc(e.dettaglio)}</small>` : ''}</span></button>
         <span class="ed-move"><button data-exup="${di}:${i}" ${i ? '' : 'disabled'} aria-label="Sposta su">▲</button>
           <button data-exdown="${di}:${i}" ${i < d.esercizi.length - 1 ? '' : 'disabled'} aria-label="Sposta giù">▼</button></span>
       </div>`).join('') || '<p class="note">Nessun esercizio: aggiungine uno.</p>'}</div>
       <div class="ed-day-tools">
         <button class="secondary" data-addex="${di}">+ Esercizio</button>
+        <button class="secondary" data-addblock="${di}">+ Blocco a tempo</button>
         <button class="link" data-dayup="${di}" ${di ? '' : 'disabled'}>▲ Giorno</button>
         <button class="link" data-daydup="${di}">Duplica giorno</button>
         <button class="link danger-inline" data-daydel="${di}">Elimina giorno</button>
@@ -590,6 +852,69 @@ function planEditor() {
     </section>`).join('')}
     <button class="secondary wide" data-addday>+ Aggiungi un giorno</button>
     <a class="primary" href="#/scheda/${p.id}">Fatto</a>`;
+}
+
+// Blocco a tempo nell'editor: tipo, tempi e gli esercizi scritti uno per riga ("12 Kettlebell swing").
+let blockDraft = null;   // { di, i, b, lines }
+const BLOCK_FIELDS = {
+  emom: ['minuti', 'ogni', 'alterna'], amrap: ['minuti'], fortime: ['giri', 'cap'],
+  tabata: ['giri', 'lavoro', 'pausa'], intervalli: ['giri', 'lavoro', 'pausa'], circuito: ['giri', 'recupero'],
+};
+const FIELD_LABELS = { minuti: 'Durata (minuti)', ogni: 'Ogni quanti secondi (60 = ogni minuto)', giri: 'Giri', lavoro: 'Lavoro (secondi)',
+  pausa: 'Pausa (secondi)', recupero: 'Recupero a fine giro (secondi)', cap: 'Tempo massimo (minuti)' };
+
+function blockEditor(di, i = null) {
+  const p = editPlan();
+  const src = i == null ? buildBlock({ modo: 'emom', esercizi: [] }) : p.giorni[di].esercizi[i];
+  blockDraft = { di, i, b: structuredClone(src), lines: src.esercizi.map(x => `${x.ripetizioni ? x.ripetizioni + ' ' : ''}${x.nome}`).join('\n') };
+  renderBlockEditor();
+}
+
+function renderBlockEditor() {
+  const { b, i } = blockDraft;
+  sheet.innerHTML = `<div class="sheet-head"><div><h2>${i == null ? 'Nuovo blocco a tempo' : 'Modifica blocco'}</h2><small>${esc(BLOCK_MODES[b.modo].label)}</small></div>
+      <button class="icon" data-close aria-label="Chiudi">✕</button></div>
+    <div class="chips wrap">${Object.entries(BLOCK_MODES).map(([k, m]) => `<button class="chip ${b.modo === k ? 'on' : ''}" data-blockmode="${k}">${m.label}</button>`).join('')}</div>
+    <p class="note">${esc(BLOCK_MODES[b.modo].spiega)}</p>
+    <div class="ed-form" data-blockform>
+      ${BLOCK_FIELDS[b.modo].map(f => (f === 'alterna'
+        ? `<label class="check"><input type="checkbox" data-bf="alterna" ${b.alterna ? 'checked' : ''}> Alterna gli esercizi: un minuto ciascuno</label>`
+        : `<label class="field stack"><span>${FIELD_LABELS[f]}</span><input data-bf="${f}" inputmode="numeric" value="${b[f] ?? ''}"></label>`)).join('')}
+      <label class="field stack"><span>Esercizi <small>(uno per riga, con le ripetizioni davanti: "12 Kettlebell swing", "30 secondi Plank")</small></span>
+        <textarea data-bf="lines" rows="5" placeholder="12 Kettlebell swing&#10;8 Piegamenti&#10;15 Crunch">${esc(blockDraft.lines)}</textarea></label>
+      <label class="field stack"><span>Note</span><textarea data-bf="note" rows="2">${esc(b.note)}</textarea></label>
+    </div>
+    <button class="primary" data-saveblock>Salva il blocco</button>
+    ${i != null ? '<button class="link danger" data-delblock>Togli il blocco</button>' : ''}`;
+  if (!sheet.open) sheet.showModal();
+}
+
+/** Legge i campi del blocco nella bozza (prima di cambiare tipo o di salvare). */
+function readBlockForm() {
+  const { b } = blockDraft;
+  for (const el of sheet.querySelectorAll('[data-bf]')) {
+    const f = el.dataset.bf;
+    if (f === 'alterna') b.alterna = el.checked;
+    else if (f === 'lines') blockDraft.lines = el.value;
+    else if (f === 'note') b.note = el.value.trim();
+    else b[f] = num(el.value);
+  }
+}
+
+async function saveBlock() {
+  readBlockForm();
+  const { di, i, b } = blockDraft;
+  const lines = blockDraft.lines.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!lines.length) return toast('Scrivi almeno un esercizio, uno per riga.');
+  const block = buildBlock({ ...b, esercizi: lines });
+  const p = editPlan();
+  if (i == null) p.giorni[di].esercizi.push(block);
+  else p.giorni[di].esercizi[i] = block;
+  await touchPlan(p);
+  sheet.close();
+  planEditor();
+  const unknown = block.esercizi.filter(x => !x.ex).map(x => x.nome);
+  toast(unknown.length ? `Salvato. Non in libreria (niente foto): ${unknown.join(', ')}` : 'Blocco salvato');
 }
 
 // Scelta dell'esercizio: dalla libreria (con foto e spiegazione) oppure un nome libero.
@@ -688,7 +1013,8 @@ function pickList(q) {
     return list.length ? `<h3>${g}</h3>${list.map(e => `<button class="row pick" data-pick="${e.id}">${thumb({ ex: e.id })}
       <span><b>${esc(e.nome)}</b><small>${esc(e.muscoli)}</small></span></button>`).join('')}` : '';
   }).join('');
-  return `${q ? `<button class="row pick" data-pickfree><span><b>Usa "${esc(q)}"</b><small>esercizio non in libreria: niente foto, ma c'è il video</small></span></button>` : ''}
+  return `${q ? `<button class="row pick" data-pickcreate><span><b>Crea l'esercizio "${esc(q)}"</b><small>con muscolo, spiegazione e una foto tua: lo ritrovi sempre</small></span></button>
+    <button class="row pick" data-pickfree><span><b>Usa solo il nome "${esc(q)}"</b><small>senza foto, con il video</small></span></button>` : ''}
     ${groups || '<p class="note">Nessun esercizio in libreria con questo nome.</p>'}`;
 }
 
@@ -777,8 +1103,31 @@ async function planEditorClick(t) {
   if (!p || !location.hash.startsWith('#/modifica/')) return false;
 
   let at;
-  if ((at = pos('[data-editex]', 'editex'))) { exerciseEditor(...at); return true; }
+  if ((at = pos('[data-editex]', 'editex'))) {
+    if (p.giorni[at[0]].esercizi[at[1]].kind === 'blocco') blockEditor(...at);
+    else exerciseEditor(...at);
+    return true;
+  }
   if ((at = pos('[data-addex]', 'addex'))) { pickExercise(at[0]); return true; }
+  if ((at = pos('[data-addblock]', 'addblock'))) { blockEditor(at[0]); return true; }
+  const mode = t.closest('[data-blockmode]');
+  if (mode && blockDraft) {
+    readBlockForm();
+    // Tempi predefiniti del nuovo tipo (es. Tabata 8 × 20"/10"), esercizi e note restano.
+    const fresh = buildBlock({ modo: mode.dataset.blockmode, esercizi: [] });
+    blockDraft.b = { ...fresh, note: blockDraft.b.note };
+    renderBlockEditor();
+    return true;
+  }
+  if (t.closest('[data-saveblock]')) { await saveBlock(); return true; }
+  if (t.closest('[data-delblock]') && blockDraft) {
+    if (!confirm('Togliere questo blocco dalla scheda?')) return true;
+    p.giorni[blockDraft.di].esercizi.splice(blockDraft.i, 1);
+    await touchPlan(p);
+    sheet.close();
+    planEditor();
+    return true;
+  }
   for (const [sel, key, delta] of [['[data-exup]', 'exup', -1], ['[data-exdown]', 'exdown', 1]]) {
     if ((at = pos(sel, key))) {
       const list = p.giorni[at[0]].esercizi;
@@ -820,6 +1169,7 @@ async function planEditorClick(t) {
   const pick = t.closest('[data-pick]');
   if (pick) { await pickDone(exerciseById(pick.dataset.pick)); return true; }
   if (t.closest('[data-pickfree]')) { await pickDone(null, $('#pickSearch').value.trim()); return true; }
+  if (t.closest('[data-pickcreate]')) { customForm(null, $('#pickSearch').value.trim(), lib => pickDone(lib)); return true; }
 
   // Modulo dell'esercizio
   const form = sheet.querySelector('[data-exform]');
@@ -856,8 +1206,14 @@ async function planEditorClick(t) {
   return false;
 }
 
+/** Esercizi creati da te usati in una scheda (anche dentro i blocchi): viaggiano con la scheda condivisa. */
+const customUsedIn = p => {
+  const ids = new Set(p.giorni.flatMap(d => d.esercizi.flatMap(e => (e.kind === 'blocco' ? e.esercizi.map(x => x.ex) : [e.ex]))));
+  return customExercises.filter(c => ids.has(c.id));
+};
+
 async function sharePlan(p) {
-  const text = planToJson(p);
+  const text = planToJson(p, customUsedIn(p));
   if (native?.shareText) return native.shareText(`Scheda ${p.nome}`, text);
   if (navigator.share) { try { await navigator.share({ title: `Scheda ${p.nome}`, text }); return; } catch (err) { if (err.name === 'AbortError') return; } }
   try { await navigator.clipboard.writeText(text); toast('Scheda copiata: incollala dove vuoi mandarla'); } catch { toast('Condivisione non disponibile'); }
@@ -877,7 +1233,15 @@ function importSheet() {
 async function doImport(text) {
   const msg = $('#importMsg');
   try {
-    const plan = parsePlan(text);
+    let addedCustom = 0;
+    const plan = parsePlan(text, list => {   // esercizi creati da chi ha mandato la scheda
+      for (const c of list) {
+        if (customExercises.some(x => x.nome.toLowerCase() === c.nome.toLowerCase())) continue;
+        customExercises.push({ ...c, id: customExercises.some(x => x.id === c.id) || !c.id ? 'u-' + Date.now() + addedCustom : c.id });
+        addedCustom++;
+      }
+      if (addedCustom) { setCustomExercises(customExercises); setSetting('customExercises', customExercises); }
+    });
     // Stessa scheda aggiornata da Claude: si sostituisce mantenendo l'identità, così la rotazione
     // dei giorni continua da dove era e la scheda resta quella in uso.
     const same = plans.find(p => p.nome.trim().toLowerCase() === plan.nome.trim().toLowerCase());
@@ -891,7 +1255,7 @@ async function doImport(text) {
     await savePlans();
     sheet.close();
     const ex = plan.giorni.reduce((a, d) => a + d.esercizi.length, 0);
-    const missing = plan.giorni.flatMap(d => d.esercizi).filter(e => !e.ex).length;
+    const missing = plan.giorni.flatMap(d => d.esercizi.flatMap(e => (e.kind === 'blocco' ? e.esercizi : [e]))).filter(e => !e.ex).length;
     toast(`Importata: ${plural(plan.giorni.length, 'giorno', 'giorni')}, ${plural(ex, 'esercizio', 'esercizi')}${missing ? ` (${missing} senza foto)` : ''}`);
     location.hash = '#/scheda/' + plan.id;
   } catch (err) {
@@ -951,10 +1315,17 @@ function progressPage() {
   }
   const byKey = new Map();
   for (const s of sessions) for (const it of s.items) {
-    const e = byKey.get(it.key) ?? { key: it.key, nome: it.nome, tipo: it.tipo, ex: it.ex, last: s.date, count: 0, best: null, bestE: 0 };
+    const e = byKey.get(it.key) ?? { key: it.key, nome: it.nome, tipo: it.tipo, ex: it.ex, kind: it.kind, modo: it.modo, last: s.date, count: 0, best: null, bestE: 0 };
     e.count++;
     e.last = s.date;
     e.nome = it.nome;
+    if (it.tipo === 'blocco') {   // risultato migliore del blocco a tempo
+      const r = it.result ?? {};
+      if (it.modo === 'amrap' && (!e.best || (r.giri ?? 0) > (e.best.giri ?? 0))) e.best = r;
+      else if (it.modo === 'fortime' && r.finito && (!e.best || r.tempo < e.best.tempo)) e.best = r;
+      byKey.set(it.key, e);
+      continue;
+    }
     for (const set of it.sets) {
       if (it.tipo === 'kg' || it.tipo === 'corpo') {
         if (!e.best || (set.kg ?? 0) > (e.best.kg ?? 0)) e.best = set;
@@ -964,7 +1335,9 @@ function progressPage() {
     byKey.set(it.key, e);
   }
   const exercises = [...byKey.values()].sort((a, b) => b.last.localeCompare(a.last));
-  const bestText = e => (!e.best ? '' : e.tipo === 'sec' ? `record ${fmt(e.best.val)} s` : e.tipo === 'min' ? `record ${fmt(e.best.val)} min`
+  const bestText = e => (e.tipo === 'blocco' ? (e.modo === 'amrap' && e.best ? `record ${plural(e.best.giri, 'giro', 'giri')}`
+    : e.modo === 'fortime' && e.best ? `miglior tempo ${clock(e.best.tempo)}` : 'blocco a tempo')
+    : !e.best ? '' : e.tipo === 'sec' ? `record ${fmt(e.best.val)} s` : e.tipo === 'min' ? `record ${fmt(e.best.val)} min`
     : `record ${fmt(e.best.kg)} kg × ${e.best.reps}${e.bestE ? ` · massimale stimato ${fmt(e.bestE)} kg` : ''}`);
   view.innerHTML = `<header class="top"><h1>Progressi</h1></header>
     <div class="kpis"><div><b>${sessions.length}</b><small>allenamenti in tutto</small></div>
@@ -991,7 +1364,14 @@ function exerciseProgress(key) {
   const lib = last.ex ? exerciseById(last.ex) : null;
   const labels = hist.map(h => shortDate(h.session.date));
   const weighted = last.tipo === 'kg' || last.tipo === 'corpo';
-  const chart = weighted
+  const isBlock = last.tipo === 'blocco';
+  const chart = isBlock
+    ? (last.modo === 'amrap'
+      ? lines({ labels, series: [{ name: 'Giri', color: C_MAIN, values: hist.map(h => h.item.result?.giri ?? null) }], fmt: v => plural(v, 'giro', 'giri') })
+      : last.modo === 'fortime'
+        ? lines({ labels, series: [{ name: 'Minuti', color: C_MAIN, values: hist.map(h => (h.item.result?.finito ? Math.round(h.item.result.tempo / 6) / 10 : null)) }], fmt: v => `${fmt(v)} min` })
+        : '<p class="note">Qui conta averlo fatto: guarda sotto tutte le volte.</p>')
+    : weighted
     ? lines({ labels, series: [
       { name: 'Peso massimo', color: C_MAIN, values: hist.map(h => Math.max(...h.item.sets.map(s => s.kg ?? 0)) || null) },
       { name: 'Massimale stimato', color: C_ALT, values: hist.map(h => Math.round(Math.max(...h.item.sets.map(s => e1rm(s.kg, s.reps))) * 10) / 10 || null) },
@@ -999,8 +1379,8 @@ function exerciseProgress(key) {
     : lines({ labels, series: [{ name: last.tipo === 'sec' ? 'Secondi' : 'Minuti', color: C_MAIN, values: hist.map(h => Math.max(...h.item.sets.map(s => s.val ?? 0))) }],
       fmt: v => `${fmt(v)} ${last.tipo === 'sec' ? 's' : 'min'}` });
   view.innerHTML = `<header class="top"><a class="back" href="#/progressi" aria-label="Indietro">‹</a><h1>${esc(last.nome)}</h1></header>
-    ${lib ? `<div class="flip small"><img src="${imgSrc(lib, 0)}" alt=""><img src="${imgSrc(lib, 1)}" alt=""></div>` : ''}
-    <button class="secondary wide" data-info="k:${esc(key)}">Come si fa</button>
+    ${hasImg(lib) ? `<div class="flip small"><img src="${imgSrc(lib, 0)}" alt=""><img src="${imgSrc(lib, 1)}" alt=""></div>` : ''}
+    <button class="secondary wide" data-info="k:${esc(key)}">${isBlock ? 'Come funziona' : 'Come si fa'}</button>
     <h2>Andamento</h2>
     ${chart}
     ${weighted ? '<p class="note">Massimale stimato: il peso che riusciresti a sollevare una volta sola, calcolato dalle tue serie (formula di Epley).</p>' : ''}
@@ -1031,7 +1411,10 @@ function editSessionSheet(id) {
   sheet.innerHTML = `<div class="sheet-head"><div><h2>Modifica allenamento ${esc(s.dayName)}</h2><small>${esc(s.planName)}</small></div>
       <button class="icon" data-close>✕</button></div>
     <label class="field"><span>Data</span><input type="date" id="editDate" value="${s.date}" max="${today()}"></label>
-    ${s.items.map((it, i) => `<div class="edit-item"><b>${esc(it.nome)}</b>
+    ${s.items.map((it, i) => (it.tipo === 'blocco' ? `<div class="edit-item"><b>${esc(it.nome)}</b>
+      ${it.modo === 'amrap' ? `<div class="set"><input data-eblock="${i}:giri" inputmode="numeric" value="${it.result?.giri ?? ''}"><span class="u">giri</span></div>`
+        : it.modo === 'fortime' ? `<div class="set"><input data-eblock="${i}:tempo" value="${it.result?.tempo != null ? clock(it.result.tempo) : ''}" placeholder="min:sec"><span class="u">tempo</span></div>`
+        : `<p class="note">${esc(blockResultText(it))}</p>`}</div>` : `<div class="edit-item"><b>${esc(it.nome)}</b>
       ${it.sets.map((set, si) => `<div class="set" data-eset="${i}:${si}"><span class="set-n">${si + 1}</span>
         ${it.tipo === 'sec' || it.tipo === 'min'
           ? `<input data-ek="val" inputmode="decimal" value="${set.val ?? ''}"><span class="u">${it.tipo === 'sec' ? 'secondi' : 'minuti'}</span>`
@@ -1040,7 +1423,7 @@ function editSessionSheet(id) {
           : `<input data-ek="kg" inputmode="decimal" value="${set.kg || ''}" placeholder="kg"><span class="u">kg ×</span>
              <input data-ek="reps" inputmode="numeric" value="${set.reps || ''}"><span class="u">rip.</span>`}
         <button class="icon small" data-edelset="${i}:${si}" aria-label="Togli la serie">✕</button></div>`).join('')}
-      <button class="link" data-eaddset="${i}">+ Serie</button></div>`).join('')}
+      <button class="link" data-eaddset="${i}">+ Serie</button></div>`)).join('')}
     <button class="primary" data-esave>Salva le modifiche</button>
     <button class="link" data-session="${s.id}">Annulla</button>`;
   if (!sheet.open) sheet.showModal();
@@ -1054,6 +1437,17 @@ function readEditFields() {
     const set = editing.items[i].sets[si];
     for (const input of row.querySelectorAll('[data-ek]')) set[input.dataset.ek] = num(input.value);
   }
+  for (const input of sheet.querySelectorAll('[data-eblock]')) {   // risultato dei blocchi: giri o tempo "12:34"
+    const [i, field] = input.dataset.eblock.split(':');
+    const it = editing.items[+i];
+    it.result ??= {};
+    if (field === 'giri') it.result.giri = Math.max(0, Math.round(num(input.value) ?? 0));
+    else {
+      const [m, sec] = input.value.split(/[:.,']/).map(x => parseInt(x, 10) || 0);
+      it.result.tempo = input.value.match(/[:.,']/) ? m * 60 + sec : m * 60;
+      it.result.finito = true;
+    }
+  }
 }
 
 async function saveEditedSession() {
@@ -1061,6 +1455,7 @@ async function saveEditedSession() {
   const s = editing;
   // Serie vuote e esercizi senza serie non contano.
   for (const it of s.items) {
+    if (it.tipo === 'blocco') continue;
     it.sets = it.sets.filter(set => (it.tipo === 'sec' || it.tipo === 'min' ? set.val != null : set.reps != null || set.kg != null))
       .map(set => (it.tipo === 'sec' || it.tipo === 'min' ? { val: set.val } : { kg: set.kg ?? 0, reps: set.reps ?? 0 }));
   }
@@ -1170,6 +1565,7 @@ function morePage() {
 
 function libraryPage() {
   view.innerHTML = `<header class="top"><a class="back" href="#/altro" aria-label="Indietro">‹</a><h1>Libreria esercizi</h1></header>
+    <button class="primary" data-newcustom>+ Crea un esercizio</button>
     <input type="search" id="libSearch" placeholder="Cerca un esercizio" autocomplete="off">
     <div id="libList">${libraryList('')}</div>`;
 }
@@ -1177,16 +1573,101 @@ function libraryPage() {
 function libraryList(q) {
   const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const match = e => !q || [e.nome, e.muscoli, ...e.alias].some(t => norm(t).includes(norm(q)));
-  return GROUPS.map(g => {
-    const list = EXERCISES.filter(e => e.gruppo === g && match(e));
-    return list.length ? `<h2>${g}</h2><div class="ex-list">${list.map(e => `<button class="ex-card" data-lib="${e.id}">${thumb({ ex: e.id })}
-      <span class="ex-body"><b>${esc(e.nome)}</b><small>${esc(e.muscoli)}</small></span></button>`).join('')}</div>` : '';
-  }).join('') || '<p class="note">Nessun esercizio trovato.</p>';
+  const card = e => `<button class="ex-card" data-lib="${e.id}">${thumb({ ex: e.id })}
+    <span class="ex-body"><b>${esc(e.nome)}</b><small>${esc(e.muscoli)}</small>${e.custom ? '<span class="ex-tip">Creato da te</span>' : ''}</span></button>`;
+  const mine = EXERCISES.filter(e => e.custom && match(e));
+  return `${mine.length ? `<h2>I tuoi esercizi</h2><div class="ex-list">${mine.map(card).join('')}</div>` : ''}
+    ${GROUPS.map(g => {
+      const list = EXERCISES.filter(e => e.gruppo === g && !e.custom && match(e));
+      return list.length ? `<h2>${g}</h2><div class="ex-list">${list.map(card).join('')}</div>` : '';
+    }).join('') || (mine.length ? '' : '<p class="note">Nessun esercizio trovato.</p>')}`;
+}
+
+// ---------------------------------------------------------------------------
+// Esercizi creati da te: restano su questo telefono (nel backup) e viaggiano con le schede condivise.
+// ---------------------------------------------------------------------------
+let customExercises = [];
+let customDraft = null;   // { id, nome, gruppo, focus, muscoli, tipo, passi, consigli, alias, foto, after? }
+const TIPI = [['kg', 'Con pesi'], ['corpo', 'Corpo libero'], ['sec', 'A tempo (secondi)'], ['min', 'Cardio (minuti)']];
+
+async function saveCustomList() {
+  setCustomExercises(customExercises);
+  await setSetting('customExercises', customExercises);
+}
+
+function customForm(id = null, prefill = '', after = null) {
+  const src = customExercises.find(c => c.id === id);
+  customDraft = src ? structuredClone(src) : { id: null, nome: prefill, gruppo: 'Glutei', focus: 'glutei', muscoli: '', tipo: 'kg', passi: [], consigli: [], alias: [], foto: null };
+  customDraft.after = after;
+  renderCustomForm();
+}
+
+function renderCustomForm() {
+  const c = customDraft;
+  sheet.innerHTML = `<div class="sheet-head"><div><h2>${c.id ? 'Modifica esercizio' : 'Nuovo esercizio'}</h2><small>Resta su questo telefono e viaggia con le schede che condividi</small></div>
+      <button class="icon" data-close aria-label="Chiudi">✕</button></div>
+    <div class="ed-form" data-customform>
+      <label class="field stack"><span>Nome</span><input data-cf="nome" value="${esc(c.nome)}" placeholder="es. Pike push up" autocomplete="off"></label>
+      <div class="custom-photo">${c.foto ? `<img src="${c.foto}" alt="">` : `<span class="thumb">${DUMBBELL}</span>`}
+        <div><label class="secondary">${c.foto ? 'Cambia foto' : 'Aggiungi una foto'}<input type="file" id="customPhoto" accept="image/*" hidden></label>
+          ${c.foto ? '<button class="link" data-customnophoto>Togli la foto</button>' : '<small class="note">Facoltativa: puoi scattarla in palestra.</small>'}</div></div>
+      <div class="field stack"><span>Muscolo principale <small>(serve per proporlo quando cambi un esercizio)</small></span>
+        <select data-cf="focus">${FOCUSES.map(f => `<option ${c.focus === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
+      <div class="field stack"><span>Gruppo nella libreria</span>
+        <select data-cf="gruppo">${GROUPS.map(g => `<option ${c.gruppo === g ? 'selected' : ''}>${g}</option>`).join('')}</select></div>
+      <label class="field stack"><span>Muscoli <small>(es. "Spalle, tricipiti")</small></span><input data-cf="muscoli" value="${esc(c.muscoli)}" autocomplete="off"></label>
+      <div class="field stack"><span>Come si registra</span><div class="chips wrap">
+        ${TIPI.map(([v, l]) => `<button class="chip ${c.tipo === v ? 'on' : ''}" data-customtipo="${v}">${l}</button>`).join('')}</div></div>
+      <label class="field stack"><span>Come si fa <small>(un passaggio per riga)</small></span><textarea data-cf="passi" rows="4">${esc(c.passi.join('\n'))}</textarea></label>
+      <label class="field stack"><span>Consigli <small>(uno per riga)</small></span><textarea data-cf="consigli" rows="3">${esc(c.consigli.join('\n'))}</textarea></label>
+      <label class="field stack"><span>Altri nomi <small>(separati da virgola: aiutano a riconoscerlo nelle schede)</small></span><input data-cf="alias" value="${esc(c.alias.join(', '))}" autocomplete="off"></label>
+    </div>
+    <button class="primary" data-savecustom>Salva l'esercizio</button>
+    ${c.id ? '<button class="link danger" data-delcustom>Elimina questo esercizio</button>' : ''}`;
+  if (!sheet.open) sheet.showModal();
+}
+
+function readCustomForm() {
+  const c = customDraft;
+  for (const el of sheet.querySelectorAll('[data-cf]')) {
+    const f = el.dataset.cf;
+    if (f === 'passi' || f === 'consigli') c[f] = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+    else if (f === 'alias') c.alias = el.value.split(',').map(s => s.trim()).filter(Boolean);
+    else c[f] = el.value.trim();
+  }
+}
+
+async function saveCustom() {
+  readCustomForm();
+  const c = customDraft;
+  if (!c.nome) return toast('Scrivi il nome dell\'esercizio.');
+  const clash = EXERCISES.find(e => e.nome.toLowerCase() === c.nome.toLowerCase() && e.id !== c.id);
+  if (clash && !confirm(`Esiste già "${clash.nome}"${clash.custom ? ' tra i tuoi esercizi' : ' nella libreria'}. Lo creo lo stesso?`)) return;
+  const { after, ...data } = c;
+  if (!data.id) { data.id = 'u-' + Date.now(); customExercises.push(data); }
+  else customExercises = customExercises.map(x => (x.id === data.id ? data : x));
+  await saveCustomList();
+  customDraft = null;
+  toast('Esercizio salvato');
+  if (after) return after(exerciseById(data.id));
+  sheet.close();
+  route();
+}
+
+/** Foto ridotta (lato massimo 600 px, JPEG) per non occupare troppo spazio. */
+async function shrinkPhoto(file) {
+  const img = await createImageBitmap(file);
+  const scale = Math.min(1, 600 / Math.max(img.width, img.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.8);
 }
 
 async function backupJson() {
   return JSON.stringify({ app: 'ac-training', version: 1, date: today(), profile, plans, activeId,
-    sessions, body: bodyLog });
+    sessions, body: bodyLog, customExercises });
 }
 
 async function saveBackup() {
@@ -1214,6 +1695,8 @@ async function restoreBackup(file) {
     const data = JSON.parse(await file.text());
     if (data.app !== 'ac-training') throw new Error('non è un backup di AC Training');
     if (!confirm(`Ripristinare il backup del ${data.date ? shortDate(data.date) : '?'}? I dati di questo telefono vengono sostituiti.`)) return;
+    customExercises = data.customExercises ?? [];
+    await saveCustomList();
     plans = data.plans ?? [];
     activeId = data.activeId ?? plans[0]?.id ?? null;
     profile = data.profile ?? profile;
@@ -1287,6 +1770,23 @@ document.addEventListener('click', async e => {
   if (info) { const it = itemFromInfo(info.dataset.info); if (it) openExercise(it); return; }
   const lib = t.closest('[data-lib]');
   if (lib) { const ex = exerciseById(lib.dataset.lib); openExercise({ ...ex, ex: ex.id }); return; }
+  // Esercizi creati da te
+  if (t.closest('[data-newcustom]')) return customForm();
+  const editCustom = t.closest('[data-editcustom]');
+  if (editCustom) return customForm(editCustom.dataset.editcustom);
+  const ctipo = t.closest('[data-customtipo]');
+  if (ctipo && customDraft) { readCustomForm(); customDraft.tipo = ctipo.dataset.customtipo; return renderCustomForm(); }
+  if (t.closest('[data-customnophoto]') && customDraft) { readCustomForm(); customDraft.foto = null; return renderCustomForm(); }
+  if (t.closest('[data-savecustom]')) return saveCustom();
+  if (t.closest('[data-delcustom]') && customDraft) {
+    if (!confirm(`Eliminare "${customDraft.nome}"? Nelle schede resta il nome, senza foto e spiegazione.`)) return;
+    customExercises = customExercises.filter(x => x.id !== customDraft.id);
+    await saveCustomList();
+    customDraft = null;
+    sheet.close();
+    route();
+    return;
+  }
   const day = t.closest('[data-day]');
   if (day) { pickedDay = +day.dataset.day; todayPage(); return; }
   if (t.closest('[data-start]')) { startWorkout(+t.closest('[data-start]').dataset.start); return; }
@@ -1319,9 +1819,16 @@ document.addEventListener('click', async e => {
     workoutPage();
     return;
   }
+  const blockStart = t.closest('[data-block-start]');
+  if (blockStart) return openTimer(+blockStart.dataset.blockStart);
+  const blockEx = t.closest('[data-blockex]');
+  if (blockEx) { const [i, k] = blockEx.dataset.blockex.split(':').map(Number); openExercise(current.items[i].esercizi[k]); return; }
+  const blockSub = t.closest('[data-blocksub]');
+  if (blockSub) { openExercise(JSON.parse(sheet.dataset.block)[+blockSub.dataset.blocksub]); return; }
   if (t.closest('[data-finish]')) return finishWorkout();
   if (t.closest('[data-cancel]')) {
     if (!confirm('Annullare l\'allenamento? Le serie segnate non vengono salvate.')) return;
+    if (tm) closeTimer();
     current = null;
     await saveCurrent();
     stopRest();
@@ -1456,6 +1963,12 @@ document.addEventListener('change', async e => {
   }
   const file = el.files?.[0];
   if (!file) return;
+  if (el.id === 'customPhoto' && customDraft) {
+    readCustomForm();
+    try { customDraft.foto = await shrinkPhoto(file); } catch { toast('Non riesco a leggere questa foto'); }
+    renderCustomForm();
+    return;
+  }
   if (e.target.id === 'planFile') { $('#planText').value = await file.text(); doImport($('#planText').value); }
   if (e.target.id === 'restoreFile') restoreBackup(file);
   e.target.value = '';
@@ -1493,6 +2006,8 @@ addEventListener('hashchange', () => { route(); scrollTo(0, 0); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkWebUpdate(); });
 
 // Avvio
+customExercises = await getSetting('customExercises', []);
+setCustomExercises(customExercises);   // prima delle schede, così le ritrovano
 plans = await getSetting('plans', []);
 // Le schede si ricollegano alla libreria a ogni avvio: così le correzioni (nuovi esercizi, secondi
 // scritti come 30'') valgono anche per le schede già importate.

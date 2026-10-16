@@ -134,6 +134,7 @@ public class MainActivity extends Activity {
     private final Runnable restEnded = this::onRestEnd;
     private long restEnd = 0;
     private String restLabel = "";
+    private String restTitle = "Recupero";
     private boolean visible = true;
 
     private void createChannels() {
@@ -160,7 +161,7 @@ public class MainActivity extends Activity {
 
     private RemoteViews restView(boolean done) {
         RemoteViews v = new RemoteViews(getPackageName(), R.layout.rest_notification);
-        v.setTextViewText(R.id.rest_title, done ? "RECUPERO FINITO" : "RECUPERO");
+        v.setTextViewText(R.id.rest_title, (done ? restTitle + " · finito" : restTitle).toUpperCase());
         v.setTextViewText(R.id.rest_label, restLabel.isEmpty() ? "Torna all'allenamento" : restLabel);
         if (done) {
             v.setViewVisibility(R.id.rest_chrono, View.GONE);
@@ -179,7 +180,7 @@ public class MainActivity extends Activity {
         Notification n = new Notification.Builder(this, CH_RUNNING)
                 .setSmallIcon(R.drawable.ic_stat_rest)
                 .setColor(0xFF22C55E)
-                .setContentTitle("Recupero")
+                .setContentTitle(restTitle)
                 .setContentText(restLabel)
                 .setCustomContentView(view)
                 .setCustomHeadsUpContentView(view)
@@ -201,7 +202,7 @@ public class MainActivity extends Activity {
         Notification n = new Notification.Builder(this, CH_DONE)
                 .setSmallIcon(R.drawable.ic_stat_rest)
                 .setColor(0xFF22C55E)
-                .setContentTitle("Recupero finito")
+                .setContentTitle(restTitle + " finito")
                 .setContentText(restLabel)
                 .setCustomContentView(view)
                 .setCustomHeadsUpContentView(view)
@@ -318,8 +319,15 @@ public class MainActivity extends Activity {
         /** Inizio (o cambio) del recupero: endMillis = quando finisce, label = cosa c'è dopo. */
         @JavascriptInterface
         public void restStart(double endMillis, String label) {
+            timerStart(endMillis, "Recupero", label);
+        }
+
+        /** Come restStart, con un titolo (es. "EMOM 12'" o "Tabata") per i blocchi a tempo. */
+        @JavascriptInterface
+        public void timerStart(double endMillis, String title, String label) {
             runOnUiThread(() -> {
                 restEnd = (long) endMillis;
+                restTitle = title == null || title.isEmpty() ? "Recupero" : title;
                 restLabel = label == null ? "" : label;
                 handler.removeCallbacks(restEnded);
                 handler.postDelayed(restEnded, Math.max(0, restEnd - System.currentTimeMillis()));

@@ -262,6 +262,22 @@ export const EXERCISES = [
 
   // ---------------------------------------------------------------- Spalle
   {
+    id: 'pike-push-up', nome: 'Pike push up', gruppo: 'Spalle', img: null, tipo: 'corpo',
+    alias: ['pike push up', 'pike push ups', 'pike pushup', 'piegamenti pike', 'piegamenti a v rovesciata', 'piegamenti per le spalle'],
+    muscoli: 'Spalle, tricipiti, parte alta del petto',
+    passi: [
+      'Parti in posizione di piegamento, poi alza il bacino formando una V rovesciata: braccia e schiena in linea.',
+      'Mani poco più larghe delle spalle, piedi vicini, testa tra le braccia.',
+      'Piega i gomiti e porta la testa verso il pavimento, davanti alle mani.',
+      'Spingi per tornare su a braccia distese.',
+    ],
+    consigli: [
+      'Più i piedi sono vicini alle mani (o rialzati su una panca), più è difficile.',
+      'Gomiti un po\' in avanti, non aperti di lato.',
+      'È la preparazione ai piegamenti in verticale: ottimo per le spalle senza attrezzi.',
+    ],
+  },
+  {
     id: 'shoulder-press-manubri', nome: 'Lento avanti con manubri', gruppo: 'Spalle', img: 'Dumbbell_Shoulder_Press', tipo: 'kg',
     alias: ['shoulder press', 'lento manubri', 'military press manubri', 'spinte sopra la testa'],
     muscoli: 'Deltoidi, tricipiti',
@@ -449,7 +465,7 @@ export const EXERCISES = [
   },
   {
     id: 'goblet-squat', nome: 'Goblet squat', gruppo: 'Gambe', img: 'Goblet_Squat', tipo: 'kg',
-    alias: ['goblet squat', 'squat con manubrio', 'squat con kettlebell'],
+    alias: ['goblet squat', 'squat con manubrio', 'squat con kettlebell', 'goblet squat con kb', 'goblet squat kb', 'goblet squat con kettlebell', 'goblet squat kettlebell'],
     muscoli: 'Quadricipiti, glutei, addome',
     passi: [
       'Tieni un manubrio o un kettlebell davanti al petto con entrambe le mani.',
@@ -610,6 +626,38 @@ export const EXERCISES = [
   },
 
   // ---------------------------------------------------------------- Glutei
+  {
+    id: 'kb-swing', nome: 'Kettlebell swing', gruppo: 'Glutei', img: 'Vertical_Swing', tipo: 'kg',
+    alias: ['kb swing', 'kettlebell swing', 'swing', 'swing con kettlebell', 'kb swing a due mani', 'swing russo', 'russian swing', 'swing con manubrio'],
+    muscoli: 'Glutei, femorali, schiena, addome',
+    passi: [
+      'Piedi poco più larghi delle spalle, kettlebell a terra davanti a te; afferralo con due mani.',
+      'Porta il kettlebell indietro tra le gambe piegando le anche (non le ginocchia), schiena dritta.',
+      'Spingi forte il bacino in avanti stringendo i glutei: il kettlebell sale da solo fino all\'altezza del petto.',
+      'Lascialo ricadere tra le gambe accompagnandolo con le anche e ripeti senza fermarti.',
+    ],
+    consigli: [
+      'La spinta viene dai glutei, non dalle braccia: le braccia sono solo "corde".',
+      'In alto corpo dritto e glutei contratti, senza inarcare la schiena.',
+      'La foto mostra lo swing con il manubrio: il movimento è lo stesso.',
+    ],
+  },
+  {
+    id: 'kb-swing-un-braccio', nome: 'Kettlebell swing a un braccio', gruppo: 'Glutei', img: 'One-Arm_Kettlebell_Swings', tipo: 'kg',
+    alias: ['kb swing ad un braccio', 'kb swing a un braccio', 'kb swing un braccio', 'kettlebell swing a un braccio', 'swing a un braccio', 'one arm kettlebell swing', 'swing monolaterale'],
+    muscoli: 'Glutei, femorali, addome, spalle',
+    passi: [
+      'Come lo swing a due mani, ma il kettlebell si tiene con una mano sola; l\'altro braccio resta libero di lato.',
+      'Porta il kettlebell indietro tra le gambe piegando le anche, schiena dritta.',
+      'Spingi il bacino in avanti: il kettlebell sale fino all\'altezza del petto.',
+      'Fai tutte le ripetizioni con un braccio, poi cambia (oppure alterna la mano in alto).',
+    ],
+    consigli: [
+      'Le ripetizioni sono per braccio.',
+      'Il busto non deve ruotare: l\'addome lavora per tenerti dritto.',
+      'Usa un kettlebell più leggero di quello a due mani.',
+    ],
+  },
   {
     id: 'hip-thrust', nome: 'Hip thrust', gruppo: 'Glutei', img: 'Barbell_Hip_Thrust', tipo: 'kg',
     alias: ['hip thrust', 'spinte del bacino', 'hip thrust bilanciere', 'hip thrust macchina'],
@@ -829,7 +877,30 @@ const norm = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLow
   .replace(/[^a-z0-9]+/g, ' ').trim();
 
 const index = new Map();
-for (const ex of EXERCISES) for (const key of [ex.id, ex.nome, ...ex.alias]) index.set(norm(key), ex);
+function rebuildIndex() {
+  index.clear();
+  for (const ex of EXERCISES) {
+    for (const key of [ex.id, ex.nome, ...(ex.alias ?? [])]) {
+      // Un esercizio creato da te non prende il posto di uno della libreria con lo stesso nome.
+      if (!(ex.custom && index.has(norm(key)))) index.set(norm(key), ex);
+    }
+  }
+}
+rebuildIndex();
+
+/**
+ * Esercizi creati da chi usa l'app (restano solo su questo telefono, e viaggiano con le schede condivise).
+ * { id: 'u-…', nome, gruppo, focus, muscoli, tipo, passi[], consigli[], alias[], foto? (immagine in data URL) }
+ */
+export function setCustomExercises(list) {
+  for (let k = EXERCISES.length - 1; k >= 0; k--) if (EXERCISES[k].custom) EXERCISES.splice(k, 1);
+  for (const e of list) EXERCISES.push({ alias: [], passi: [], consigli: [], img: null, ...e, custom: true });
+  rebuildIndex();
+}
+
+/** Muscoli principali tra cui scegliere per un esercizio creato da te (gli stessi usati per le sostituzioni). */
+export const FOCUSES = ['petto', 'dorso', 'spalle', 'spalle posteriori', 'bicipiti', 'tricipiti', 'quadricipiti', 'femorali',
+  'glutei', 'polpacci', 'lombari', 'addome', 'cardio'];
 
 /** Esercizio della libreria da id o nome (anche con alias o parole in più), oppure null. */
 export function findExercise(idOrName) {
@@ -916,6 +987,9 @@ const SWAP = {
   'step-up': ['glutei', 'Salita su una panca con i manubri: semplice, una gamba alla volta.'],
 
   'polpacci': ['polpacci', 'Alla macchina in piedi o con un manubrio su un gradino.'],
+  'pike-push-up': ['spalle', 'A corpo libero, si fanno ovunque: spalle e tricipiti senza attrezzi.'],
+  'kb-swing': ['glutei', 'Con il kettlebell: glutei e femorali in modo esplosivo, alza anche il battito.'],
+  'kb-swing-un-braccio': ['glutei', 'Swing con una mano: in più lavora l\'addome per non ruotare.'],
 
   'plank': ['addome', 'Tenuta sugli avambracci: tutto il core, senza carico sulla schiena.'],
   'plank-laterale': ['addome', 'Tenuta di fianco: lavora soprattutto i fianchi (obliqui).'],
@@ -945,8 +1019,12 @@ const FOCUS_WORDS = [
 ];
 
 /** Muscolo principale di un esercizio della scheda (libreria o testo dei muscoli), o null. */
+const focusOfLib = e => SWAP[e.id]?.[0] ?? (e.custom ? e.focus : null);
+
 export function focusOf(ex, muscoli = '') {
   if (ex && SWAP[ex]) return SWAP[ex][0];
+  const own = ex ? EXERCISES.find(e => e.id === ex && e.custom) : null;
+  if (own?.focus) return own.focus;
   const t = String(muscoli).toLowerCase();
   return FOCUS_WORDS.find(([, re]) => re.test(t))?.[0] ?? null;
 }
@@ -957,6 +1035,7 @@ export function alternatives(ex, muscoli = '') {
   if (!focus) return { focus: null, list: [] };
   return {
     focus,
-    list: EXERCISES.filter(e => e.id !== ex && SWAP[e.id]?.[0] === focus).map(e => ({ ...e, consiglio: SWAP[e.id][1] })),
+    list: EXERCISES.filter(e => e.id !== ex && focusOfLib(e) === focus)
+      .map(e => ({ ...e, consiglio: SWAP[e.id]?.[1] ?? e.consigli?.[0] ?? 'Esercizio creato da te.' })),
   };
 }

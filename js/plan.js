@@ -93,6 +93,7 @@ function normalize(raw) {
  * Serve sia all'importazione sia all'editor delle schede.
  */
 export function buildItem(e) {
+  if (e.blocco || e.kind === 'blocco') return buildBlock(e);
   const nome = String(e.esercizio ?? e.nome ?? '').trim();
   // "Hip thrust (bilanciere o macchina)": il nome per la libreria e il dettaglio tra parentesi.
   const paren = nome.match(/^(.*?)\s*\((.*)\)\s*$/);
@@ -120,22 +121,112 @@ export function buildItem(e) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Blocchi a tempo: EMOM, AMRAP, For time, Tabata, intervalli, circuito. Nella scheda sono un elemento
+// della lista "esercizi" con il campo "blocco" e i suoi esercizi dentro.
+// ---------------------------------------------------------------------------
+export const BLOCK_MODES = {
+  emom: { label: 'EMOM', spiega: 'All\'inizio di ogni minuto fai le ripetizioni indicate; il tempo che avanza è recupero. Se non riesci a finire nel minuto, togli qualche ripetizione.' },
+  amrap: { label: 'AMRAP', spiega: 'Più giri possibili del circuito nel tempo indicato, senza fermarti. Tocca "+1 giro" a ogni giro completato.' },
+  fortime: { label: 'For time', spiega: 'Fai tutto il lavoro il più veloce possibile: il risultato è il tempo. Se arrivi al tempo massimo ti fermi.' },
+  tabata: { label: 'Tabata', spiega: '20 secondi al massimo e 10 di pausa, per 8 giri (4 minuti). Se ci sono più esercizi si alternano a ogni giro.' },
+  intervalli: { label: 'Intervalli', spiega: 'Lavoro e pausa alternati per il numero di giri indicato. Se ci sono più esercizi si alternano a ogni giro.' },
+  circuito: { label: 'Circuito', spiega: 'Fai gli esercizi uno dopo l\'altro senza pausa; recupero solo a fine giro. Tocca ✓ a ogni giro finito.' },
+};
+
+function blockMode(text) {
+  const t = String(text ?? '').toLowerCase().replace(/[\s_-]+/g, '');
+  if (/^e\d*mom|everyminute|ognimin/.test(t)) return 'emom';
+  if (/amrap|piugiri/.test(t)) return 'amrap';
+  if (/fortime|atempo|cronometr/.test(t)) return 'fortime';
+  if (/tabata/.test(t)) return 'tabata';
+  if (/hiit|interval/.test(t)) return 'intervalli';
+  return 'circuito';
+}
+
+const numOr = (v, d) => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isFinite(n) && n > 0 ? n : d; };
+
+/** Blocco a tempo nel formato dell'app; i suoi esercizi sono collegati alla libreria come gli altri. */
+export function buildBlock(e) {
+  const modo = BLOCK_MODES[e.modo] ? e.modo : blockMode(e.blocco ?? e.modo);
+  const eMinutes = String(e.blocco ?? '').match(/^e(\d)mom/i);   // "E2MOM": ogni 2 minuti
+  const b = {
+    kind: 'blocco', tipo: 'blocco', modo, ex: null,
+    minuti: numOr(e.minuti, modo === 'emom' ? 10 : modo === 'amrap' ? 12 : null),
+    ogni: numOr(e.ogni, eMinutes ? +eMinutes[1] * 60 : 60),
+    lavoro: numOr(e.lavoro, modo === 'tabata' ? 20 : 40),
+    pausa: numOr(e.pausa, modo === 'tabata' ? 10 : 20),
+    giri: Math.round(numOr(e.giri, modo === 'tabata' ? 8 : modo === 'intervalli' ? 10 : modo === 'circuito' ? 3 : 1)),
+    recupero: Math.round(numOr(e.recupero, modo === 'circuito' ? 90 : 0)),
+    cap: numOr(e.cap, modo === 'fortime' ? 20 : null),
+    alterna: !!e.alterna,
+    esercizi: (e.esercizi ?? []).map(x => {
+      const src = typeof x === 'string' ? parseBlockLine(x) : { id: x.ex, ...x };
+      const it = buildItem(src);
+      return { ex: it.ex, nome: it.nome, dettaglio: it.dettaglio, ripetizioni: String(src.ripetizioni ?? '').trim(), tipo: it.tipo, muscoli: it.muscoli };
+    }),
+    note: String(e.note ?? ''),
+    dettaglio: '', peso: null, superserie: '',
+    target: { min: null, max: null, unit: 'reps', side: '' },
+  };
+  b.nome = blockTitle(b);
+  b.serie = modo === 'circuito' ? b.giri : 1;
+  b.riposo = modo === 'circuito' ? b.recupero : 0;
+  b.ripetizioni = b.esercizi.map(x => `${x.ripetizioni} ${x.nome}`).join(' · ');
+  b.muscoli = '';
+  return b;
+}
+
+export function blockTitle(b) {
+  const sec = s => (s % 60 ? `${s}"` : `${s / 60}'`);
+  switch (b.modo) {
+    case 'emom': return b.ogni === 60 ? `EMOM ${b.minuti}'` : b.ogni % 60 === 0 ? `E${b.ogni / 60}MOM ${b.minuti}'` : `EMOM ${b.minuti}' ogni ${sec(b.ogni)}`;
+    case 'amrap': return `AMRAP ${b.minuti}'`;
+    case 'fortime': return `For time${b.giri > 1 ? ` · ${b.giri} giri` : ''}${b.cap ? ` (max ${b.cap}')` : ''}`;
+    case 'tabata': return `Tabata ${b.giri} × ${sec(b.lavoro)}/${sec(b.pausa)}`;
+    case 'intervalli': return `Intervalli ${b.giri} × ${sec(b.lavoro)}/${sec(b.pausa)}`;
+    default: return `Circuito · ${b.giri} giri`;
+  }
+}
+
+/** Riga scritta a mano nell'editor: "10 Kettlebell swing", "30\" Plank", "Burpee x 12", "Corsa - 400 m". */
+export function parseBlockLine(line) {
+  const s = String(line).trim();
+  let m = s.match(/^([\d][\d\s\-–/,.]*\s*(?:x|×)?\s*(?:secondi|sec|s\b|"|''|min\b|minuti|m\b|metri|cal\b|calorie|per lato|per gamba|per braccio)?)\s+(.+)$/i);
+  if (m) return { esercizio: m[2].trim(), ripetizioni: m[1].replace(/\s*[x×]\s*$/i, '').trim() };
+  m = s.match(/^(.+?)\s*(?:[x×:]|-|–)\s*([\d].*)$/i);
+  if (m) return { esercizio: m[1].trim(), ripetizioni: m[2].trim() };
+  return { esercizio: s, ripetizioni: '' };
+}
+
 /** Scheda dell'app → JSON nel formato da importare (per condividerla o ricaricarla altrove). */
-export function planToJson(p) {
+export function planToJson(p, personali = []) {
   return JSON.stringify({
     formato: FORMAT, nome: p.nome, persona: p.persona, obiettivo: p.obiettivo,
     note: p.note, riscaldamento: p.riscaldamento, defaticamento: p.defaticamento, regole: p.regole,
     giorni: p.giorni.map(d => ({
       nome: d.nome, titolo: d.titolo,
-      esercizi: d.esercizi.map(e => ({ id: e.ex ?? undefined, esercizio: e.nome, dettaglio: e.dettaglio, muscoli: e.muscoli, serie: e.serie,
-        ripetizioni: e.ripetizioni, riposo: e.riposo, peso: e.peso, superserie: e.superserie, note: e.note })),
+      esercizi: d.esercizi.map(e => (e.kind === 'blocco'
+        ? { blocco: BLOCK_MODES[e.modo].label, minuti: e.minuti ?? undefined, ogni: e.modo === 'emom' ? e.ogni : undefined,
+          lavoro: ['tabata', 'intervalli'].includes(e.modo) ? e.lavoro : undefined, pausa: ['tabata', 'intervalli'].includes(e.modo) ? e.pausa : undefined,
+          giri: e.giri, recupero: e.modo === 'circuito' ? e.recupero : undefined, cap: e.modo === 'fortime' ? e.cap : undefined,
+          alterna: e.alterna || undefined, note: e.note || undefined,
+          esercizi: e.esercizi.map(x => ({ id: x.ex ?? undefined, esercizio: x.nome, ripetizioni: x.ripetizioni, dettaglio: x.dettaglio || undefined })) }
+        : { id: e.ex ?? undefined, esercizio: e.nome, dettaglio: e.dettaglio, muscoli: e.muscoli, serie: e.serie,
+          ripetizioni: e.ripetizioni, riposo: e.riposo, peso: e.peso, superserie: e.superserie, note: e.note })),
     })),
+    // Esercizi creati da chi manda la scheda (senza foto): chi la importa se li ritrova.
+    esercizi_personali: personali.length ? personali.map(({ foto, custom, ...x }) => x) : undefined,
   }, null, 2);
 }
 
 /** Scheda pronta per l'app, con gli esercizi collegati alla libreria (foto e spiegazione). */
-export function parsePlan(text) {
-  const raw = normalize(typeof text === 'string' ? extractJson(text) : text);
+export function parsePlan(text, registerPersonali = null) {
+  const obj = typeof text === 'string' ? extractJson(text) : text;
+  // Esercizi personali di chi ha mandato la scheda: vanno registrati prima, così gli esercizi li trovano.
+  const personali = Array.isArray(obj.esercizi_personali) ? obj.esercizi_personali.filter(x => x?.nome) : [];
+  registerPersonali?.(personali);
+  const raw = normalize(obj);
   if (!raw.giorni.length) throw new Error('La scheda non ha giorni di allenamento ("giorni").');
   const giorni = raw.giorni.map((g, gi) => {
     if (!Array.isArray(g.esercizi) || !g.esercizi.length) throw new Error(`Il giorno ${g.nome ?? gi + 1} non ha esercizi.`);
@@ -143,7 +234,7 @@ export function parsePlan(text) {
       nome: String(g.nome ?? String.fromCharCode(65 + gi)),
       titolo: String(g.titolo ?? ''),
       esercizi: g.esercizi.map((e, ei) => {
-        if (!String(e.esercizio ?? e.nome ?? '').trim()) throw new Error(`Nel giorno ${g.nome ?? gi + 1} l'esercizio n° ${ei + 1} non ha il nome.`);
+        if (!e.blocco && !String(e.esercizio ?? e.nome ?? '').trim()) throw new Error(`Nel giorno ${g.nome ?? gi + 1} l'esercizio n° ${ei + 1} non ha il nome.`);
         return buildItem(e);
       }),
     };
@@ -164,7 +255,9 @@ export function parsePlan(text) {
 }
 
 /** Chiave con cui si ritrova la storia di un esercizio: id della libreria o nome normalizzato. */
-export const exKey = item => item.ex ?? 'x:' + item.nome.toLowerCase().replace(/[^a-zà-ú0-9]+/g, ' ').trim();
+export const exKey = item => (item.kind === 'blocco'
+  ? `b:${item.modo}:${item.esercizi.map(x => x.ex ?? x.nome.toLowerCase()).join('+')}`
+  : item.ex ?? 'x:' + item.nome.toLowerCase().replace(/[^a-zà-ú0-9]+/g, ' ').trim());
 
 /** Testo da incollare nella chat con Claude per avere le schede nel formato dell'app. */
 export const CLAUDE_PROMPT = `Ogni volta che mi prepari una scheda di allenamento, oltre al PDF dammi la versione per la mia app "AC Training".
@@ -228,6 +321,19 @@ COSA METTERE IN OGNI CAMPO DELL'ESERCIZIO:
 - "peso": kg di partenza consigliati come numero, oppure null.
 - "superserie": stessa sigla (es. "S1") per gli esercizi da fare di fila senza riposo, altrimenti "".
 - "note": consiglio breve di esecuzione, oppure "".
+
+BLOCCHI A TEMPO (EMOM, AMRAP, For time, Tabata, intervalli, circuito):
+Si mettono nella lista "esercizi" del giorno, nel punto in cui vanno fatti, come oggetto con il campo "blocco" al posto di "esercizio".
+Dentro "esercizi" del blocco ogni esercizio ha solo "esercizio", "ripetizioni" (testo) ed eventualmente "dettaglio". Esempi:
+{ "blocco": "EMOM", "minuti": 12, "ogni": 60, "alterna": false, "esercizi": [ { "esercizio": "Kettlebell swing", "ripetizioni": "12" }, { "esercizio": "Piegamenti", "ripetizioni": "8" } ], "note": "" }
+{ "blocco": "AMRAP", "minuti": 15, "esercizi": [ { "esercizio": "Affondi", "ripetizioni": "10 per gamba" }, { "esercizio": "Crunch", "ripetizioni": "15" } ] }
+{ "blocco": "For time", "giri": 3, "cap": 20, "esercizi": [ { "esercizio": "Goblet squat", "ripetizioni": "15" }, { "esercizio": "Burpee", "ripetizioni": "10" } ] }
+{ "blocco": "Tabata", "giri": 8, "lavoro": 20, "pausa": 10, "esercizi": [ { "esercizio": "Mountain climber", "ripetizioni": "" } ] }
+{ "blocco": "Intervalli", "giri": 10, "lavoro": 40, "pausa": 20, "esercizi": [ { "esercizio": "Cyclette", "ripetizioni": "veloce" } ] }
+{ "blocco": "Circuito", "giri": 3, "recupero": 90, "esercizi": [ { "esercizio": "Step up su panca", "ripetizioni": "10 per gamba" }, { "esercizio": "Plank", "ripetizioni": "30 secondi" } ] }
+- "minuti": durata (EMOM, AMRAP). "ogni": secondi tra un giro e l'altro dell'EMOM (60 = ogni minuto, 120 = ogni 2 minuti).
+- "alterna": true se nell'EMOM gli esercizi si alternano un minuto ciascuno (minuto 1 il primo, minuto 2 il secondo…); false se si fanno tutti ogni minuto.
+- "giri": numero di giri. "lavoro" e "pausa": secondi (Tabata, intervalli). "recupero": secondi di pausa a fine giro (circuito). "cap": minuti massimi (For time).
 
 ALTRO:
 - "riscaldamento", "defaticamento", "regole" e "note" sono liste di frasi (testo semplice, non oggetti).
