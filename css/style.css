@@ -315,3 +315,8 @@ body.in-workout #toast { bottom: calc(var(--nav-h) + var(--rest-h) + env(safe-ar
 #sheet h3 { margin: 14px 0 4px; color: var(--accent); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
 .row > span.thumb, .ed-form .row > span:first-child { flex: none; display: grid; }
 .row.pick > span:nth-child(2), .ed-form .row > span:nth-child(2) { flex: 1; min-width: 0; display: grid; gap: 2px; }
+
+/* Cambio esercizio durante l'allenamento */
+.set-tools .swap { margin-left: auto; }
+.check { display: flex; gap: 8px; align-items: center; margin: 4px 2px 12px; color: var(--muted); font-size: 13px; }
+.check input { accent-color: var(--accent); width: 18px; height: 18px; }

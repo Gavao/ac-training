@@ -79,6 +79,7 @@ const volumeOf = item => item.sets.reduce((a, s) => a + (s.kg ?? 0) * (s.reps ??
 function setsText(item) {
   if (item.tipo === 'sec') return item.sets.map(s => `${fmt(s.val)} s`).join(', ');
   if (item.tipo === 'min') return item.sets.map(s => `${fmt(s.val)} min`).join(', ');
+  if (item.tipo === 'corpo' && !item.sets.some(s => s.kg)) return `${item.sets.map(s => s.reps ?? '—').join(', ')} ripetizioni`;
   const groups = [];
   for (const s of item.sets) {
     const kg = s.kg ? `${fmt(s.kg)} kg` : (item.tipo === 'corpo' ? 'corpo libero' : '— kg');
@@ -227,11 +228,14 @@ function workoutItem(it, i) {
       ${unit
         ? `<input data-k="val" inputmode="decimal" value="${s.val ?? ''}" placeholder="${it.target.min ?? ''}"><span class="u">${unit}</span>
            ${it.tipo === 'sec' && !s.done ? `<button class="hold" data-hold aria-label="Avvia il cronometro">${hold?.i === i && hold?.si === si ? clock(Math.max(0, Math.ceil((hold.end - Date.now()) / 1000))) : '▶'}</button>` : ''}`
-        : `<input data-k="kg" inputmode="decimal" value="${s.kg ?? ''}" placeholder="${it.tipo === 'corpo' ? '+kg' : 'kg'}"><span class="u">kg ×</span>
+        : it.tipo === 'corpo'   // a corpo libero (addominali, piegamenti…): solo le ripetizioni
+        ? `<input data-k="reps" inputmode="numeric" value="${s.reps ?? ''}" placeholder="${it.target.max ?? ''}"><span class="u">ripetizioni</span>`
+        : `<input data-k="kg" inputmode="decimal" value="${s.kg ?? ''}" placeholder="kg"><span class="u">kg ×</span>
            <input data-k="reps" inputmode="numeric" value="${s.reps ?? ''}" placeholder="${it.target.max ?? ''}"><span class="u">rip.</span>`}
       <button class="tick" data-done aria-label="Serie fatta">✓</button>
     </div>`).join('')}</div>
-    <div class="set-tools"><button class="link" data-addset>+ Serie</button>${it.sets.length > 1 ? '<button class="link" data-delset>− Serie</button>' : ''}</div>
+    <div class="set-tools"><button class="link" data-addset>+ Serie</button>${it.sets.length > 1 ? '<button class="link" data-delset>− Serie</button>' : ''}
+      <button class="link swap" data-swap>⇄ Cambia esercizio</button></div>
   </section>`;
 }
 
@@ -260,8 +264,7 @@ function startHold(i, si) {
     if (left <= 0) {
       clearInterval(hold.timer);
       hold = null;
-      navigator.vibrate?.([300, 120, 300]);
-      beep();
+      alarm();
       if (current && !current.items[i].sets[si].done) toggleSet(i, si);
     }
   }, 250);
@@ -293,7 +296,7 @@ function toggleSet(i, si) {
     // Superserie: niente recupero finché non si arriva all'ultimo esercizio del gruppo.
     const nextItem = current.items[i + 1];
     const inSuperset = it.superserie && nextItem?.superserie === it.superserie;
-    if (!inSuperset) startRest(it.riposo);
+    if (!inSuperset) startRest(it.riposo, nextSetLabel(i, si));
   }
   saveCurrent();
   rerenderWorkout();
@@ -367,18 +370,25 @@ document.addEventListener('visibilitychange', () => {
 // ---------------------------------------------------------------------------
 // Recupero: conto alla rovescia con vibrazione e suono alla fine
 // ---------------------------------------------------------------------------
-let restEnd = 0, restTotal = 0, restTimer = null, audio = null;
+let restEnd = 0, restTotal = 0, restTimer = null, audio = null, restLabel = '';
 const restBox = $('#rest');
 
-function startRest(seconds) {
+/**
+ * Recupero. Nell'APK Android lo segue anche il telefono: se chiudi l'app compare la notifica con il
+ * conto alla rovescia e, alla fine, l'avviso con suono e vibrazione (vedi MainActivity.java).
+ */
+function startRest(seconds, label = restLabel) {
   if (!seconds) return;
   // Il suono si può preparare solo durante un tocco: qui siamo dentro il tocco su ✓.
   try { audio ??= new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch { /* niente suono */ }
   restTotal = seconds;
   restEnd = Date.now() + seconds * 1000;
+  restLabel = label;
+  native?.restStart?.(restEnd, restLabel);
   restBox.hidden = false;
   restBox.classList.remove('over');
   clearInterval(restTimer);
+  clearTimeout(restTimer);
   restTimer = setInterval(updateRest, 250);
   updateRest();
 }
@@ -389,10 +399,10 @@ function updateRest() {
   $('#restFill').style.width = `${Math.max(0, Math.min(1, left / restTotal)) * 100}%`;
   if (left <= 0 && !restBox.classList.contains('over')) {
     restBox.classList.add('over');
-    navigator.vibrate?.([300, 120, 300]);
-    beep();
+    // Se l'app era chiusa ed è finito da un pezzo, l'avviso l'ha già dato la notifica.
+    if (!native?.restStart || Date.now() - restEnd < 3000) alarm();
     clearInterval(restTimer);
-    restTimer = setTimeout(stopRest, 4000);
+    restTimer = setTimeout(stopRest, 5000);
   }
 }
 
@@ -400,20 +410,49 @@ function stopRest() {
   clearInterval(restTimer);
   clearTimeout(restTimer);
   restBox.hidden = true;
+  native?.restStop?.();
 }
 
+/** Fine del recupero (o di una tenuta): vibrazione e suono per circa 3 secondi. */
+function alarm() {
+  if (native?.vibrate) native.vibrate('0,600,200,600,200,900');
+  else navigator.vibrate?.([600, 200, 600, 200, 900]);
+  beep();
+}
+
+// Suono a tutto volume (segue il volume dei contenuti multimediali): 12 bip alternati in 3 secondi.
 function beep() {
   if (!audio) return;
-  for (const [at, freq] of [[0, 880], [0.22, 1175]]) {
+  audio.resume?.();
+  const t0 = audio.currentTime + 0.02;
+  const out = audio.createDynamicsCompressor();
+  out.connect(audio.destination);
+  for (let i = 0; i < 12; i++) {
+    const at = t0 + i * 0.25;
     const o = audio.createOscillator(), g = audio.createGain();
-    o.frequency.value = freq;
-    g.gain.setValueAtTime(0.0001, audio.currentTime + at);
-    g.gain.exponentialRampToValueAtTime(0.3, audio.currentTime + at + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + at + 0.18);
-    o.connect(g).connect(audio.destination);
-    o.start(audio.currentTime + at);
-    o.stop(audio.currentTime + at + 0.2);
+    o.type = 'square';
+    o.frequency.value = i % 2 ? 1320 : 990;
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(0.9, at + 0.01);
+    g.gain.setValueAtTime(0.9, at + 0.16);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.2);
+    o.connect(g).connect(out);
+    o.start(at);
+    o.stop(at + 0.21);
   }
+}
+
+/** Cosa c'è dopo (per la notifica del recupero): la prossima serie da fare. */
+function nextSetLabel(i, si) {
+  const items = current?.items ?? [];
+  const find = (from, sFrom) => {
+    for (let a = from; a < items.length; a++) {
+      const b = items[a].sets.findIndex((s, k) => !s.done && (a !== from || k >= sFrom));
+      if (b >= 0) return `Prossima: ${items[a].nome} · serie ${b + 1} di ${items[a].sets.length}`;
+    }
+    return null;
+  };
+  return find(i, si + 1) ?? find(0, 0) ?? 'Ultima serie fatta: puoi terminare l\'allenamento';
 }
 
 restBox.addEventListener('click', e => {
@@ -423,6 +462,7 @@ restBox.addEventListener('click', e => {
   restEnd += +b.dataset.rest * 1000;
   restTotal = Math.max(restTotal, Math.ceil((restEnd - Date.now()) / 1000));
   if (restBox.classList.contains('over')) startRest(Math.max(5, Math.ceil((restEnd - Date.now()) / 1000)));
+  else native?.restStart?.(restEnd, restLabel);
   updateRest();
 });
 
@@ -560,6 +600,80 @@ function pickExercise(di, i = null) {
     <input type="search" id="pickSearch" placeholder="Cerca (es. glutei, panca, lat…)" autocomplete="off">
     <div id="pickList">${pickList('')}</div>`;
   if (!sheet.open) sheet.showModal();   // dal modulo dell'esercizio la finestra è già aperta
+}
+
+// ---------------------------------------------------------------------------
+// Cambio di un esercizio durante l'allenamento (es. macchina occupata): prima quelli che lavorano
+// gli stessi muscoli. Vale per questo allenamento; con la spunta anche per la scheda.
+// ---------------------------------------------------------------------------
+let swapIndex = null;
+
+function swapSheet(i) {
+  swapIndex = i;
+  const it = current.items[i];
+  sheet.innerHTML = `<div class="sheet-head"><div><h2>Cambia esercizio</h2><small>al posto di ${esc(it.nome)}</small></div>
+      <button class="icon" data-close aria-label="Chiudi">✕</button></div>
+    <label class="check"><input type="checkbox" id="swapPlan"> Cambialo anche nella scheda, per le prossime volte</label>
+    <input type="search" id="swapSearch" placeholder="Cerca un altro esercizio" autocomplete="off">
+    <div id="swapList">${swapList('')}</div>`;
+  sheet.showModal();
+}
+
+function swapList(q) {
+  const it = current.items[swapIndex];
+  const lib = libOf(it);
+  const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const row = e => `<button class="row pick" data-swappick="${e.id}">${thumb({ ex: e.id })}
+    <span><b>${esc(e.nome)}</b><small>${esc(e.muscoli)}</small></span></button>`;
+  if (q) {
+    const found = EXERCISES.filter(e => [e.nome, e.muscoli, e.gruppo, ...e.alias].some(t => norm(t).includes(norm(q))));
+    return `<button class="row pick" data-swapfree><span><b>Usa "${esc(q)}"</b><small>esercizio non in libreria</small></span></button>
+      ${found.map(row).join('') || '<p class="note">Nessun esercizio in libreria con questo nome.</p>'}`;
+  }
+  // Simili: stesso gruppo e almeno un muscolo in comune vengono prima, poi il resto del gruppo.
+  const muscles = new Set((lib?.muscoli ?? it.muscoli ?? '').toLowerCase().split(/,\s*/).map(m => m.split(' ')[0]));
+  const shared = e => e.muscoli.toLowerCase().split(/,\s*/).some(m => muscles.has(m.split(' ')[0]));
+  const group = lib?.gruppo;
+  const similar = EXERCISES.filter(e => e.id !== lib?.id && (e.gruppo === group || shared(e)))
+    .sort((a, b) => shared(b) - shared(a) || (b.gruppo === group) - (a.gruppo === group));
+  return `<h3>Simili</h3>${similar.map(row).join('') || '<p class="note">Cerca qui sopra un esercizio.</p>'}`;
+}
+
+async function swapExercise(lib, freeName = null) {
+  const i = swapIndex;
+  const old = current.items[i];
+  const done = old.sets.filter(s => s.done).length;
+  if (done && !confirm(`Hai già segnato ${plural(done, 'serie', 'serie')} di ${old.nome}: restano su quell'esercizio e il nuovo parte dalla serie dopo. Continuo?`)) return;
+  const fresh = buildItem({ id: lib?.id, esercizio: lib?.nome ?? freeName, serie: old.serie, ripetizioni: old.ripetizioni,
+    riposo: old.riposo, superserie: old.superserie, note: '' });
+  const key = exKey(fresh);
+  const last = historyOf(key)[0]?.item;
+  const left = Math.max(1, old.sets.length - done);
+  const sets = Array.from({ length: left }, (_, k) => {
+    const prev = last?.sets[Math.min(k, last.sets.length - 1)];
+    return { kg: prev?.kg ?? null, reps: null, val: prev?.val ?? null, done: false };
+  });
+  const newItem = { ...fresh, key, sets };
+  if (done) {
+    old.sets = old.sets.filter(s => s.done);   // le serie fatte restano al vecchio esercizio
+    current.items.splice(i + 1, 0, newItem);
+  } else {
+    current.items[i] = newItem;
+  }
+  if ($('#swapPlan')?.checked) {
+    const plan = plans.find(p => p.id === current.planId);
+    const day = plan?.giorni[current.dayIndex];
+    const pos = day?.esercizi.findIndex(e => exKey(e) === old.key);
+    if (day && pos >= 0) {
+      day.esercizi[pos] = { ...fresh, serie: day.esercizi[pos].serie };
+      plan.updated = today();
+      await savePlans();
+    }
+  }
+  await saveCurrent();
+  sheet.close();
+  toast(`Ora fai: ${newItem.nome}`);
+  rerenderWorkout();
 }
 
 function pickList(q) {
@@ -917,6 +1031,8 @@ function editSessionSheet(id) {
       ${it.sets.map((set, si) => `<div class="set" data-eset="${i}:${si}"><span class="set-n">${si + 1}</span>
         ${it.tipo === 'sec' || it.tipo === 'min'
           ? `<input data-ek="val" inputmode="decimal" value="${set.val ?? ''}"><span class="u">${it.tipo === 'sec' ? 'secondi' : 'minuti'}</span>`
+          : it.tipo === 'corpo'
+          ? `<input data-ek="reps" inputmode="numeric" value="${set.reps || ''}"><span class="u">ripetizioni</span>`
           : `<input data-ek="kg" inputmode="decimal" value="${set.kg || ''}" placeholder="kg"><span class="u">kg ×</span>
              <input data-ek="reps" inputmode="numeric" value="${set.reps || ''}"><span class="u">rip.</span>`}
         <button class="icon small" data-edelset="${i}:${si}" aria-label="Togli la serie">✕</button></div>`).join('')}
@@ -1180,6 +1296,10 @@ document.addEventListener('click', async e => {
     toggleSet(i, si);
     return;
   }
+  if (t.closest('[data-swap]')) return swapSheet(+t.closest('[data-item]').dataset.item);
+  const swapPick = t.closest('[data-swappick]');
+  if (swapPick) return swapExercise(exerciseById(swapPick.dataset.swappick));
+  if (t.closest('[data-swapfree]')) return swapExercise(null, $('#swapSearch').value.trim());
   if (t.closest('[data-addset]')) {
     const it = current.items[+t.closest('[data-item]').dataset.item];
     const prev = it.sets.at(-1);
@@ -1312,6 +1432,7 @@ document.addEventListener('input', e => {
   }
   if (input.id === 'libSearch') $('#libList').innerHTML = libraryList(input.value.trim());
   if (input.id === 'pickSearch') $('#pickList').innerHTML = pickList(input.value.trim());
+  if (input.id === 'swapSearch') $('#swapList').innerHTML = swapList(input.value.trim());
 });
 
 document.addEventListener('change', async e => {
@@ -1369,6 +1490,9 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) chec
 
 // Avvio
 plans = await getSetting('plans', []);
+// Le schede si ricollegano alla libreria a ogni avvio: così le correzioni (nuovi esercizi, secondi
+// scritti come 30'') valgono anche per le schede già importate.
+plans = plans.map(p => ({ ...p, giorni: p.giorni.map(d => ({ ...d, esercizi: d.esercizi.map(e => buildItem({ ...e, id: e.ex, esercizio: e.nome })) })) }));
 activeId = await getSetting('activePlan', plans[0]?.id ?? null);
 current = await getSetting('current', null);
 profile = await getSetting('profile', { nome: '' });

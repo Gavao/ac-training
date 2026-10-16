@@ -12,7 +12,8 @@ export function parseTarget(text) {
   const num = s => parseFloat(s.replace(',', '.'));
   const min = range ? num(range[1]) : one ? num(one[1]) : null;
   const max = range ? num(range[2]) : min;
-  const unit = /\bmin|minut/.test(t) ? 'min' : /sec|secondi|\d\s*s\b|"/.test(t) ? 'sec' : 'reps';
+  // Secondi anche scritti 30s, 30", 30'' o 30″; minuti anche 10' (un apice solo).
+  const unit = /\bmin|minut|\d\s*['’](?!['’])/.test(t) ? 'min' : /sec|secondi|\d\s*s\b|"|''|’’|″/.test(t) ? 'sec' : 'reps';
   const side = t.match(/per\s+(gamba|braccio|lato)/)?.[0] ?? '';
   return { min, max, unit, side };
 }

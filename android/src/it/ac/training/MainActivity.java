@@ -1,7 +1,22 @@
 package it.ac.training;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.DownloadManager;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
+import android.media.RingtoneManager;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.view.View;
+import android.widget.RemoteViews;
 import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.ContentUris;
@@ -49,6 +64,7 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private ValueCallback<Uri[]> fileCallback;
+    private boolean askedNotifications = false;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -100,6 +116,128 @@ public class MainActivity extends Activity {
         });
 
         web.loadUrl(HOME);
+        createChannels();
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Recupero tra le serie. L'app web dice quando finisce (restStart) o se viene saltato (restStop).
+    // Se chiudi l'app mentre scorre, compare una notifica con il conto alla rovescia (toccandola si
+    // riapre l'app); alla fine arriva l'avviso con suono e vibrazione anche ad app chiusa.
+    // -----------------------------------------------------------------------------------------
+    private static final String CH_RUNNING = "rest_running";
+    private static final String CH_DONE = "rest_done";
+    private static final int NOTIF_REST = 10;
+    private static final int NOTIF_PERMISSION = 3;
+    private static final long[] DONE_PATTERN = {0, 600, 200, 600, 200, 900};
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable restEnded = this::onRestEnd;
+    private long restEnd = 0;
+    private String restLabel = "";
+    private boolean visible = true;
+
+    private void createChannels() {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        NotificationChannel running = new NotificationChannel(CH_RUNNING, "Recupero in corso", NotificationManager.IMPORTANCE_HIGH);
+        running.setDescription("Conto alla rovescia del recupero quando l'app è chiusa");
+        running.setSound(null, null);
+        running.enableVibration(false);
+        NotificationChannel done = new NotificationChannel(CH_DONE, "Fine recupero", NotificationManager.IMPORTANCE_HIGH);
+        done.setDescription("Avviso con suono e vibrazione quando il recupero è finito");
+        done.enableVibration(true);
+        done.setVibrationPattern(DONE_PATTERN);
+        done.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+                new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build());
+        nm.createNotificationChannel(running);
+        nm.createNotificationChannel(done);
+    }
+
+    private PendingIntent openApp() {
+        Intent open = new Intent(this, MainActivity.class)
+                .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+        return PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+
+    private RemoteViews restView(boolean done) {
+        RemoteViews v = new RemoteViews(getPackageName(), R.layout.rest_notification);
+        v.setTextViewText(R.id.rest_title, done ? "RECUPERO FINITO" : "RECUPERO");
+        v.setTextViewText(R.id.rest_label, restLabel.isEmpty() ? "Torna all'allenamento" : restLabel);
+        if (done) {
+            v.setViewVisibility(R.id.rest_chrono, View.GONE);
+            v.setViewVisibility(R.id.rest_done, View.VISIBLE);
+        } else {
+            long base = SystemClock.elapsedRealtime() + Math.max(0, restEnd - System.currentTimeMillis());
+            v.setChronometer(R.id.rest_chrono, base, null, true);
+            v.setChronometerCountDown(R.id.rest_chrono, true);
+        }
+        return v;
+    }
+
+    private void showRunning() {
+        if (restEnd <= System.currentTimeMillis()) return;
+        RemoteViews view = restView(false);
+        Notification n = new Notification.Builder(this, CH_RUNNING)
+                .setSmallIcon(R.drawable.ic_stat_rest)
+                .setColor(0xFF22C55E)
+                .setContentTitle("Recupero")
+                .setContentText(restLabel)
+                .setCustomContentView(view)
+                .setCustomHeadsUpContentView(view)
+                .setStyle(new Notification.DecoratedCustomViewStyle())
+                .setContentIntent(openApp())
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(Notification.CATEGORY_PROGRESS)
+                .setTimeoutAfter(Math.max(1000, restEnd - System.currentTimeMillis() + 500))
+                .build();
+        postRest(n);
+    }
+
+    private void onRestEnd() {
+        if (restEnd == 0) return;
+        restEnd = 0;
+        if (visible) return;   // app aperta: suono e vibrazione li fa l'app web
+        RemoteViews view = restView(true);
+        Notification n = new Notification.Builder(this, CH_DONE)
+                .setSmallIcon(R.drawable.ic_stat_rest)
+                .setColor(0xFF22C55E)
+                .setContentTitle("Recupero finito")
+                .setContentText(restLabel)
+                .setCustomContentView(view)
+                .setCustomHeadsUpContentView(view)
+                .setStyle(new Notification.DecoratedCustomViewStyle())
+                .setContentIntent(openApp())
+                .setAutoCancel(true)
+                .setCategory(Notification.CATEGORY_ALARM)
+                .setTimeoutAfter(120000)
+                .build();
+        postRest(n);
+    }
+
+    private void postRest(Notification n) {
+        try {
+            getSystemService(NotificationManager.class).notify(NOTIF_REST, n);
+        } catch (SecurityException ignored) {
+            // notifiche non permesse
+        }
+    }
+
+    private void cancelRestNotification() {
+        getSystemService(NotificationManager.class).cancel(NOTIF_REST);
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        visible = true;
+        cancelRestNotification();   // tornato nell'app: il recupero lo mostra lei
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        visible = false;
+        showRunning();
     }
 
     @Override
@@ -174,6 +312,48 @@ public class MainActivity extends Activity {
                 return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
             } catch (Exception e) {
                 return "0";
+            }
+        }
+
+        /** Inizio (o cambio) del recupero: endMillis = quando finisce, label = cosa c'è dopo. */
+        @JavascriptInterface
+        public void restStart(double endMillis, String label) {
+            runOnUiThread(() -> {
+                restEnd = (long) endMillis;
+                restLabel = label == null ? "" : label;
+                handler.removeCallbacks(restEnded);
+                handler.postDelayed(restEnded, Math.max(0, restEnd - System.currentTimeMillis()));
+                if (!visible) showRunning();
+                // Android 13+: il permesso per le notifiche si chiede la prima volta che serve.
+                if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                        && !askedNotifications) {
+                    askedNotifications = true;
+                    requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIF_PERMISSION);
+                }
+            });
+        }
+
+        /** Recupero saltato o allenamento finito. */
+        @JavascriptInterface
+        public void restStop() {
+            runOnUiThread(() -> {
+                restEnd = 0;
+                handler.removeCallbacks(restEnded);
+                cancelRestNotification();
+            });
+        }
+
+        /** Vibrazione (es. "0,600,200,600"): millisecondi di pausa e di vibrazione alternati. */
+        @JavascriptInterface
+        public void vibrate(String pattern) {
+            try {
+                String[] parts = pattern.split(",");
+                long[] ms = new long[parts.length];
+                for (int i = 0; i < parts.length; i++) ms[i] = Long.parseLong(parts[i].trim());
+                Vibrator v = getSystemService(Vibrator.class);
+                if (v != null && v.hasVibrator()) v.vibrate(VibrationEffect.createWaveform(ms, -1));
+            } catch (Exception ignored) {
+                // vibrazione non disponibile
             }
         }
 
