@@ -1952,6 +1952,28 @@ document.addEventListener('click', async e => {
   if (tip) tip.closest('.chart').querySelector('.chart-read').textContent = tip.dataset.tip;
 });
 
+// Tasto OK/Invio della tastiera nei campi di una serie: dai kg passa alle ripetizioni, dall'ultimo
+// campo segna la serie come fatta (e parte il recupero), come toccare ✓.
+document.addEventListener('keydown', e => {
+  const input = e.target;
+  if (e.key !== 'Enter' || !input.dataset?.k || !current) return;
+  e.preventDefault();
+  const row = input.closest('[data-set]');
+  const inputs = [...row.querySelectorAll('input[data-k]')];
+  const next = inputs[inputs.indexOf(input) + 1];
+  if (next) { next.focus(); return; }
+  const i = +input.closest('[data-item]').dataset.item, si = +row.dataset.set;
+  current.items[i].sets[si][input.dataset.k] = num(input.value);
+  input.blur();
+  if (!current.items[i].sets[si].done) { keepAwake(); toggleSet(i, si); }
+});
+
+// Tocco su ✓ con la tastiera aperta: senza questo il primo tocco chiude la tastiera, la pagina si
+// sposta e il tocco può finire fuori dal pulsante (serie non segnata, niente recupero).
+document.addEventListener('pointerdown', e => {
+  if (e.target.closest('[data-done]') && document.activeElement?.dataset?.k) e.preventDefault();
+});
+
 document.addEventListener('input', e => {
   const input = e.target;
   if (input.dataset.k && current) {
