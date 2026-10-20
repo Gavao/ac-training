@@ -353,7 +353,12 @@ function toggleSet(i, si) {
     const partner = group.find(x => current.items.indexOf(x) > i && x.sets[si] && !x.sets[si].done);
     const straight = si > 0 && group.some(x => x.sets[si - 1] && !x.sets[si - 1].done);
     if (partner && !straight) toast(`Superserie: vai subito con ${partner.nome}, il recupero parte dopo.`);
-    else startRest(+it.riposo || Math.max(0, ...group.map(x => +x.riposo || 0)), nextSetLabel(i, si));
+    else {
+      const sec = +it.riposo || Math.max(0, ...group.map(x => +x.riposo || 0));
+      // Riposo 0 nella scheda: si dice perché il recupero non parte (si cambia in Schede → modifica).
+      if (sec) startRest(sec, nextSetLabel(i, si));
+      else toast(`${it.nome}: nella scheda il riposo è 0 s, quindi niente recupero. Puoi cambiarlo in Schede → Modifica.`);
+    }
   }
   saveCurrent();
   rerenderWorkout();
