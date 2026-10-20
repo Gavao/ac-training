@@ -345,10 +345,13 @@ function toggleSet(i, si) {
       if (next.kg == null) next.kg = s.kg;
       if (next.val == null) next.val = s.val;
     }
-    // Superserie: niente recupero finché non si arriva all'ultimo esercizio del gruppo.
-    const nextItem = current.items[i + 1];
-    const inSuperset = it.superserie && nextItem?.superserie === it.superserie;
-    if (!inSuperset) startRest(it.riposo, nextSetLabel(i, si));
+    // Superserie: niente recupero se c'è da fare subito la stessa serie dell'esercizio dopo nel gruppo.
+    // Se invece le serie si fanno una dopo l'altra (la serie prima del compagno non è fatta), il recupero c'è.
+    const group = it.superserie ? current.items.filter((x, k) => k !== i && x.superserie === it.superserie) : [];
+    const partner = group.find(x => current.items.indexOf(x) > i && x.sets[si] && !x.sets[si].done);
+    const straight = si > 0 && group.some(x => x.sets[si - 1] && !x.sets[si - 1].done);
+    if (partner && !straight) toast(`Superserie: vai subito con ${partner.nome}, il recupero parte dopo.`);
+    else startRest(+it.riposo || Math.max(0, ...group.map(x => +x.riposo || 0)), nextSetLabel(i, si));
   }
   saveCurrent();
   rerenderWorkout();
@@ -449,12 +452,32 @@ function startRest(seconds, label = restLabel) {
   restEnd = Date.now() + seconds * 1000;
   restLabel = label;
   native?.restStart?.(restEnd, restLabel);
+  showRest();
+}
+
+function showRest() {
+  rememberRest();
   restBox.hidden = false;
   restBox.classList.remove('over');
   clearInterval(restTimer);
   clearTimeout(restTimer);
   restTimer = setInterval(updateRest, 250);
   updateRest();
+}
+
+// Il recupero in corso resta salvato: se Android chiude e riapre l'app, riprende da dove era.
+function rememberRest() {
+  try { localStorage.setItem('rest', JSON.stringify({ end: restEnd, total: restTotal, label: restLabel })); } catch { /* niente */ }
+}
+function resumeRest() {
+  try {
+    const r = JSON.parse(localStorage.getItem('rest') ?? 'null');
+    if (!current || !r || r.end <= Date.now()) { localStorage.removeItem('rest'); return; }
+    restEnd = r.end;
+    restTotal = r.total;
+    restLabel = r.label ?? '';
+    showRest();
+  } catch { /* niente */ }
 }
 
 function updateRest() {
@@ -473,6 +496,7 @@ function updateRest() {
 function stopRest() {
   clearInterval(restTimer);
   clearTimeout(restTimer);
+  try { localStorage.removeItem('rest'); } catch { /* niente */ }
   restBox.hidden = true;
   native?.restStop?.();
 }
@@ -704,7 +728,7 @@ restBox.addEventListener('click', e => {
   restEnd += +b.dataset.rest * 1000;
   restTotal = Math.max(restTotal, Math.ceil((restEnd - Date.now()) / 1000));
   if (restBox.classList.contains('over')) startRest(Math.max(5, Math.ceil((restEnd - Date.now()) / 1000)));
-  else native?.restStart?.(restEnd, restLabel);
+  else { native?.restStart?.(restEnd, restLabel); rememberRest(); }
   updateRest();
 });
 
@@ -1737,7 +1761,7 @@ const updateBanner = () => (apkUpdate
 
 // Nuova versione pubblicata: si ricarica, ma mai durante un allenamento (il recupero si perderebbe).
 async function checkWebUpdate() {
-  if (APP_VERSION === 'dev' || location.hash === '#/allenamento' || sheet.open) return;
+  if (APP_VERSION === 'dev' || current || location.hash === '#/allenamento' || sheet.open) return;   // mai durante un allenamento
   try {
     const latest = (await (await fetch('version.txt', { cache: 'no-store' })).text()).trim();
     if (!latest || latest === APP_VERSION || sessionStorage.getItem('reloadedFor') === latest) return;
@@ -2020,6 +2044,7 @@ sessions = (await db.all('sessions')).sort((a, b) => a.date.localeCompare(b.date
 bodyLog = (await db.all('body')).sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
 navigator.storage?.persist?.().catch(() => {});   // chiede al telefono di non cancellare mai i dati dell'app
 route();
+resumeRest();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 checkWebUpdate();
 checkApkUpdate().then(() => { if (apkUpdate && !location.hash.replace(/^#\/?/, '')) todayPage(); });
