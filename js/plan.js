@@ -118,7 +118,30 @@ export function buildItem(e) {
     peso: Number.isFinite(peso) ? peso : null,
     superserie: e.superserie ? String(e.superserie).trim() : '',
     note: String(e.note ?? ''),
+    ...(tipo === 'min' ? { cardio: cardioOf(e, base, lib, `${ripetizioni} ${e.dettaglio ?? ''}`) } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Cardio: oltre ai minuti si segnano velocità e pendenza (tapis roulant, corsa) o il livello
+// (cyclette, ellittica, vogatore, stair climber). Gli obiettivi arrivano dai campi "velocita",
+// "pendenza", "livello" della scheda o dal testo ("6 km/h, pendenza 8%", "livello 7").
+// ---------------------------------------------------------------------------
+export const CARDIO_FIELDS = { vel: { unit: 'km/h', label: 'Velocità' }, pend: { unit: '%', label: 'Pendenza' }, liv: { unit: 'liv.', label: 'Livello' } };
+
+function cardioOf(e, nome, lib, text) {
+  const n = v => {
+    const m = String(v ?? '').match(/\d+(?:[.,]\d+)?/);
+    return m ? parseFloat(m[0].replace(',', '.')) : null;
+  };
+  const old = e.cardio ?? {};
+  const t = String(text).toLowerCase();
+  const vel = n(e.velocita ?? e['velocità'] ?? old.vel) ?? n(t.match(/(\d+(?:[.,]\d+)?)\s*km\s*\/?\s*h/)?.[1]);
+  const pend = n(e.pendenza ?? old.pend) ?? n(t.match(/pendenza\D{0,4}(\d+(?:[.,]\d+)?)/)?.[1] ?? t.match(/(\d+(?:[.,]\d+)?)\s*%/)?.[1]);
+  const liv = n(e.livello ?? e.resistenza ?? old.liv) ?? n(t.match(/(?:livello|resistenza|liv\.?)\s*(\d+)/)?.[1]);
+  const campi = [...(old.campi ?? lib?.cardio ?? (/tapis|corsa|camminat|treadmill|running/i.test(nome) ? ['vel', 'pend'] : ['liv']))];
+  for (const [k, v] of [['vel', vel], ['pend', pend], ['liv', liv]]) if (v != null && !campi.includes(k)) campi.push(k);
+  return { campi: ['vel', 'pend', 'liv'].filter(k => campi.includes(k)), vel, pend, liv };
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +236,8 @@ export function planToJson(p, personali = []) {
           alterna: e.alterna || undefined, note: e.note || undefined,
           esercizi: e.esercizi.map(x => ({ id: x.ex ?? undefined, esercizio: x.nome, ripetizioni: x.ripetizioni, dettaglio: x.dettaglio || undefined })) }
         : { id: e.ex ?? undefined, esercizio: e.nome, dettaglio: e.dettaglio, muscoli: e.muscoli, serie: e.serie,
-          ripetizioni: e.ripetizioni, riposo: e.riposo, peso: e.peso, superserie: e.superserie, note: e.note })),
+          ripetizioni: e.ripetizioni, riposo: e.riposo, peso: e.peso, superserie: e.superserie, note: e.note,
+          velocita: e.cardio?.vel ?? undefined, pendenza: e.cardio?.pend ?? undefined, livello: e.cardio?.liv ?? undefined })),
     })),
     // Esercizi creati da chi manda la scheda (senza foto): chi la importa se li ritrova.
     esercizi_personali: personali.length ? personali.map(({ foto, custom, ...x }) => x) : undefined,
@@ -321,6 +345,13 @@ COSA METTERE IN OGNI CAMPO DELL'ESERCIZIO:
 - "peso": kg di partenza consigliati come numero, oppure null.
 - "superserie": stessa sigla (es. "S1") per gli esercizi da fare di fila senza riposo, altrimenti "".
 - "note": consiglio breve di esecuzione, oppure "".
+
+CARDIO (tapis roulant, corsa, cyclette, ellittica, vogatore, stair climber):
+Il cardio che va segnato (es. camminata in pendenza a fine allenamento) mettilo nella lista "esercizi" come un esercizio normale, non solo in "riscaldamento" o "defaticamento". Usa "serie": 1, "ripetizioni": "20 minuti", "riposo": 0 e aggiungi:
+- "velocita": km/h come numero (tapis roulant, corsa), altrimenti null;
+- "pendenza": percentuale come numero (tapis roulant), altrimenti null;
+- "livello": livello di resistenza come numero (cyclette, ellittica, vogatore, stair climber), altrimenti null.
+Esempio: { "esercizio": "Tapis roulant", "dettaglio": "camminata in pendenza", "muscoli": "Cardio", "serie": 1, "ripetizioni": "20 minuti", "riposo": 0, "peso": null, "superserie": "", "note": "", "velocita": 5.5, "pendenza": 10, "livello": null }
 
 BLOCCHI A TEMPO (EMOM, AMRAP, For time, Tabata, intervalli, circuito):
 Si mettono nella lista "esercizi" del giorno, nel punto in cui vanno fatti, come oggetto con il campo "blocco" al posto di "esercizio".

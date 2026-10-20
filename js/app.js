@@ -2,7 +2,7 @@
 // Tutti i dati restano nel telefono (IndexedDB); il backup è un file che si salva o si condivide.
 import { db, getSetting, setSetting } from './db.js';
 import { EXERCISES, GROUPS, FOCUSES, exerciseById, alternatives, setCustomExercises } from './exercises.js';
-import { parsePlan, exKey, CLAUDE_PROMPT, buildItem, buildBlock, planToJson, BLOCK_MODES, parseBlockLine } from './plan.js';
+import { parsePlan, exKey, CLAUDE_PROMPT, buildItem, buildBlock, planToJson, BLOCK_MODES, parseBlockLine, CARDIO_FIELDS } from './plan.js';
 import { bars, lines } from './charts.js';
 import { APP_VERSION } from './version.js';
 
@@ -91,11 +91,16 @@ const e1rm = (kg, reps) => (kg > 0 && reps > 0 ? (reps === 1 ? kg : kg * (1 + re
 const topSet = item => item.sets.reduce((best, s) => (!best || (s.kg ?? 0) > (best.kg ?? 0) || ((s.kg ?? 0) === (best.kg ?? 0) && (s.reps ?? 0) > (best.reps ?? 0)) ? s : best), null);
 const volumeOf = item => item.sets.reduce((a, s) => a + (s.kg ?? 0) * (s.reps ?? 0), 0);
 
-/** Riassunto di una volta: "40 kg × 12, 12, 10" oppure "30 s, 30 s" o "10 min". */
+// Cardio: velocità, pendenza e livello segnati in una serie, e come si scrivono.
+const cardioKeys = s => ['vel', 'pend', 'liv'].filter(k => s[k] != null);
+const cardioCampi = it => it.cardio?.campi ?? exerciseById(it.ex)?.cardio ?? ['vel', 'pend'];
+const cardioText = (k, v) => (k === 'vel' ? `${fmt(v)} km/h` : k === 'pend' ? `pendenza ${fmt(v)}%` : `livello ${fmt(v)}`);
+
+/** Riassunto di una volta: "40 kg × 12, 12, 10" oppure "30 s, 30 s" o "20 min · 6 km/h · pendenza 8%". */
 function setsText(item) {
   if (item.tipo === 'blocco') return blockResultText(item);
   if (item.tipo === 'sec') return item.sets.map(s => `${fmt(s.val)} s`).join(', ');
-  if (item.tipo === 'min') return item.sets.map(s => `${fmt(s.val)} min`).join(', ');
+  if (item.tipo === 'min') return item.sets.map(s => [`${fmt(s.val)} min`, ...cardioKeys(s).map(k => cardioText(k, s[k]))].join(' · ')).join(', ');
   if (item.tipo === 'corpo' && !item.sets.some(s => s.kg)) return `${item.sets.map(s => s.reps ?? '—').join(', ')} ripetizioni`;
   const groups = [];
   for (const s of item.sets) {
@@ -214,7 +219,9 @@ function startWorkout(di) {
       // Si parte dai pesi della volta scorsa (serie per serie), altrimenti dal peso consigliato.
       const sets = Array.from({ length: it.serie }, (_, i) => {
         const prev = last?.sets[Math.min(i, last.sets.length - 1)];
-        return { kg: prev?.kg ?? it.peso ?? null, reps: null, val: prev?.val ?? null, done: false };
+        // Cardio: velocità, pendenza e livello della volta scorsa, altrimenti quelli della scheda.
+        const cardio = it.cardio ? Object.fromEntries(it.cardio.campi.map(k => [k, prev?.[k] ?? it.cardio[k] ?? null])) : {};
+        return { kg: prev?.kg ?? it.peso ?? null, reps: null, val: prev?.val ?? null, ...cardio, done: false };
       });
       return { ...it, key: exKey(it), sets };
     }),
@@ -251,9 +258,12 @@ function workoutItem(it, i) {
     ${last ? `<p class="ex-last">Ultima volta (${shortDate(last.session.date)}): ${esc(setsText(last.item))}</p>` : ''}
     ${tip ? `<p class="ex-tip">↑ ${esc(tip)}</p>` : ''}
     ${it.note ? `<p class="ex-note">${esc(it.note)}</p>` : ''}
-    <div class="sets">${it.sets.map((s, si) => `<div class="set ${s.done ? 'done' : ''}" data-set="${si}">
+    <div class="sets">${it.sets.map((s, si) => `<div class="set ${s.done ? 'done' : ''}${it.cardio && it.tipo === 'min' ? ' cardio' : ''}" data-set="${si}">
       <span class="set-n">${si + 1}</span>
-      ${unit
+      ${it.tipo === 'min' && it.cardio
+        ? `<input data-k="val" inputmode="decimal" value="${s.val ?? ''}" placeholder="${it.target.min ?? ''}"><span class="u">min</span>
+           ${it.cardio.campi.map(k => `<input data-k="${k}" inputmode="decimal" value="${s[k] ?? ''}" placeholder="${esc(CARDIO_FIELDS[k].label.slice(0, 3).toLowerCase())}" aria-label="${CARDIO_FIELDS[k].label}"><span class="u">${CARDIO_FIELDS[k].unit}</span>`).join('')}`
+        : unit
         ? `<input data-k="val" inputmode="decimal" value="${s.val ?? ''}" placeholder="${it.target.min ?? ''}"><span class="u">${unit}</span>
            ${it.tipo === 'sec' && !s.done ? `<button class="hold" data-hold aria-label="Avvia il cronometro">${hold?.i === i && hold?.si === si ? clock(Math.max(0, Math.ceil((hold.end - Date.now()) / 1000))) : '▶'}</button>` : ''}`
         : it.tipo === 'corpo'   // a corpo libero (addominali, piegamenti…): solo le ripetizioni
@@ -357,7 +367,7 @@ function toggleSet(i, si) {
       const sec = +it.riposo || Math.max(0, ...group.map(x => +x.riposo || 0));
       // Riposo 0 nella scheda: si dice perché il recupero non parte (si cambia in Schede → modifica).
       if (sec) startRest(sec, nextSetLabel(i, si));
-      else toast(`${it.nome}: nella scheda il riposo è 0 s, quindi niente recupero. Puoi cambiarlo in Schede → Modifica.`);
+      else if (it.tipo !== 'min') toast(`${it.nome}: nella scheda il riposo è 0 s, quindi niente recupero. Puoi cambiarlo in Schede → Modifica.`);
     }
   }
   saveCurrent();
@@ -378,7 +388,8 @@ async function finishWorkout() {
       : {
         key: it.key, ex: it.ex, nome: it.nome, tipo: it.tipo,
         sets: it.sets.filter(s => s.done).map(s => (it.tipo === 'sec' || it.tipo === 'min'
-          ? { val: num(s.val) } : { kg: num(s.kg) ?? 0, reps: num(s.reps) ?? 0 })),
+          ? { val: num(s.val), ...Object.fromEntries(cardioKeys(s).map(k => [k, num(s[k])]).filter(([, v]) => v != null)) }
+          : { kg: num(s.kg) ?? 0, reps: num(s.reps) ?? 0 })),
       })).filter(it => it.sets.length),
   };
   if (tm) closeTimer();
@@ -1093,6 +1104,8 @@ function exerciseEditor(di, i) {
       ${chips('ripetizioni', ['8-10', '10', '12', '15', '30 secondi', '10 minuti'], e.ripetizioni)}
       <label class="field stack"><span>Riposo (secondi)</span><input data-ef="riposo" inputmode="numeric" value="${e.riposo}"></label>
       ${chips('riposo', [0, 30, 45, 60, 90, 120], e.riposo)}
+      ${e.tipo === 'min' ? `<div class="field stack"><span>Cardio <small>(obiettivi, facoltativi: lascia vuoto quello che non serve)</small></span>
+        <div class="cardio-ed">${['vel', 'pend', 'liv'].map(k => `<label><input data-ef="${k}" inputmode="decimal" value="${e.cardio?.[k] ?? ''}" placeholder="${CARDIO_FIELDS[k].label}"><small>${CARDIO_FIELDS[k].unit}</small></label>`).join('')}</div></div>` : ''}
       <label class="field stack"><span>Peso consigliato (kg) <small>(facoltativo)</small></span><input data-ef="peso" inputmode="decimal" value="${e.peso ?? ''}"></label>
       <label class="field stack"><span>Superserie <small>(stessa sigla, es. S1, per esercizi di fila senza riposo)</small></span><input data-ef="superserie" value="${esc(e.superserie)}" autocomplete="off"></label>
       <label class="field stack"><span>Note</span><textarea data-ef="note" rows="2">${esc(e.note)}</textarea></label>
@@ -1111,7 +1124,8 @@ async function saveExerciseForm() {
   const f = k => form.querySelector(`[data-ef="${k}"]`).value;
   p.giorni[di].esercizi[i] = buildItem({ id: old.ex, esercizio: old.nome, dettaglio: f('dettaglio'), muscoli: f('muscoli'),
     serie: +$('#serieVal').textContent, ripetizioni: f('ripetizioni').trim() || '10', riposo: f('riposo'), peso: f('peso'),
-    superserie: f('superserie'), note: f('note') });
+    superserie: f('superserie'), note: f('note'),
+    velocita: form.querySelector('[data-ef="vel"]')?.value, pendenza: form.querySelector('[data-ef="pend"]')?.value, livello: form.querySelector('[data-ef="liv"]')?.value });
   await touchPlan(p);
 }
 
@@ -1414,6 +1428,10 @@ function exerciseProgress(key) {
     <button class="secondary wide" data-info="k:${esc(key)}">${isBlock ? 'Come funziona' : 'Come si fa'}</button>
     <h2>Andamento</h2>
     ${chart}
+    ${last.tipo === 'min' ? ['vel', 'liv'].map(k => {   // cardio: un grafico a parte per velocità o livello (unità diverse)
+      const values = hist.map(h => Math.max(0, ...h.item.sets.map(s => s[k] ?? 0)) || null);
+      return values.some(v => v != null) ? `<h2>${CARDIO_FIELDS[k].label}</h2>${lines({ labels, series: [{ name: CARDIO_FIELDS[k].label, color: C_MAIN, values }], fmt: v => cardioText(k, v) })}` : '';
+    }).join('') : ''}
     ${weighted ? '<p class="note">Massimale stimato: il peso che riusciresti a sollevare una volta sola, calcolato dalle tue serie (formula di Epley).</p>' : ''}
     <h2>Tutte le volte</h2>
     ${[...hist].reverse().map(h => `<button class="row" data-session="${h.session.id}"><span><b>${esc(shortDate(h.session.date))}</b><small>${esc(setsText(h.item))}</small></span>
@@ -1448,7 +1466,8 @@ function editSessionSheet(id) {
         : `<p class="note">${esc(blockResultText(it))}</p>`}</div>` : `<div class="edit-item"><b>${esc(it.nome)}</b>
       ${it.sets.map((set, si) => `<div class="set" data-eset="${i}:${si}"><span class="set-n">${si + 1}</span>
         ${it.tipo === 'sec' || it.tipo === 'min'
-          ? `<input data-ek="val" inputmode="decimal" value="${set.val ?? ''}"><span class="u">${it.tipo === 'sec' ? 'secondi' : 'minuti'}</span>`
+          ? `<input data-ek="val" inputmode="decimal" value="${set.val ?? ''}"><span class="u">${it.tipo === 'sec' ? 'secondi' : 'min'}</span>
+             ${it.tipo === 'min' ? ['vel', 'pend', 'liv'].filter(k => set[k] != null || cardioCampi(it).includes(k)).map(k => `<input data-ek="${k}" inputmode="decimal" value="${set[k] ?? ''}" aria-label="${CARDIO_FIELDS[k].label}"><span class="u">${CARDIO_FIELDS[k].unit}</span>`).join('') : ''}`
           : it.tipo === 'corpo'
           ? `<input data-ek="reps" inputmode="numeric" value="${set.reps || ''}"><span class="u">ripetizioni</span>`
           : `<input data-ek="kg" inputmode="decimal" value="${set.kg || ''}" placeholder="kg"><span class="u">kg ×</span>
@@ -1488,7 +1507,8 @@ async function saveEditedSession() {
   for (const it of s.items) {
     if (it.tipo === 'blocco') continue;
     it.sets = it.sets.filter(set => (it.tipo === 'sec' || it.tipo === 'min' ? set.val != null : set.reps != null || set.kg != null))
-      .map(set => (it.tipo === 'sec' || it.tipo === 'min' ? { val: set.val } : { kg: set.kg ?? 0, reps: set.reps ?? 0 }));
+      .map(set => (it.tipo === 'sec' || it.tipo === 'min'
+        ? { val: set.val, ...Object.fromEntries(cardioKeys(set).map(k => [k, set[k]])) } : { kg: set.kg ?? 0, reps: set.reps ?? 0 }));
   }
   s.items = s.items.filter(it => it.sets.length);
   if (!s.items.length) return toast('Lascia almeno una serie, oppure elimina l\'allenamento.');

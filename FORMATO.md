@@ -69,6 +69,13 @@ COSA METTERE IN OGNI CAMPO DELL'ESERCIZIO:
 - "superserie": stessa sigla (es. "S1") per gli esercizi da fare di fila senza riposo, altrimenti "".
 - "note": consiglio breve di esecuzione, oppure "".
 
+CARDIO (tapis roulant, corsa, cyclette, ellittica, vogatore, stair climber):
+Il cardio che va segnato (es. camminata in pendenza a fine allenamento) mettilo nella lista "esercizi" come un esercizio normale, non solo in "riscaldamento" o "defaticamento". Usa "serie": 1, "ripetizioni": "20 minuti", "riposo": 0 e aggiungi:
+- "velocita": km/h come numero (tapis roulant, corsa), altrimenti null;
+- "pendenza": percentuale come numero (tapis roulant), altrimenti null;
+- "livello": livello di resistenza come numero (cyclette, ellittica, vogatore, stair climber), altrimenti null.
+Esempio: { "esercizio": "Tapis roulant", "dettaglio": "camminata in pendenza", "muscoli": "Cardio", "serie": 1, "ripetizioni": "20 minuti", "riposo": 0, "peso": null, "superserie": "", "note": "", "velocita": 5.5, "pendenza": 10, "livello": null }
+
 BLOCCHI A TEMPO (EMOM, AMRAP, For time, Tabata, intervalli, circuito):
 Si mettono nella lista "esercizi" del giorno, nel punto in cui vanno fatti, come oggetto con il campo "blocco" al posto di "esercizio".
 Dentro "esercizi" del blocco ogni esercizio ha solo "esercizio", "ripetizioni" (testo) ed eventualmente "dettaglio". Esempi:

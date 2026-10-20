@@ -830,42 +830,42 @@ export const EXERCISES = [
 
   // ---------------------------------------------------------------- Cardio
   {
-    id: 'tapis-roulant', nome: 'Tapis roulant (camminata)', gruppo: 'Cardio', img: 'Walking_Treadmill', tipo: 'min',
+    id: 'tapis-roulant', nome: 'Tapis roulant (camminata)', gruppo: 'Cardio', img: 'Walking_Treadmill', tipo: 'min', cardio: ['vel', 'pend'],
     alias: ['tapis roulant', 'camminata', 'camminata in pendenza', 'treadmill'],
     muscoli: 'Cardio, gambe',
     passi: ['Imposta velocità e pendenza indicate nella scheda.', 'Cammina senza tenerti alle maniglie.'],
     consigli: ['La camminata in pendenza (8-12%) brucia molto ed è leggera sulle articolazioni.'],
   },
   {
-    id: 'corsa', nome: 'Corsa sul tapis roulant', gruppo: 'Cardio', img: 'Running_Treadmill', tipo: 'min',
+    id: 'corsa', nome: 'Corsa sul tapis roulant', gruppo: 'Cardio', img: 'Running_Treadmill', tipo: 'min', cardio: ['vel', 'pend'],
     alias: ['corsa', 'running', 'corsa tapis roulant'],
     muscoli: 'Cardio, gambe',
     passi: ['Inizia con 3-5 minuti di camminata.', 'Corri alla velocità indicata, passo leggero.'],
     consigli: ['Per gli intervalli: alterna tratti veloci e lenti come da scheda.'],
   },
   {
-    id: 'cyclette', nome: 'Cyclette', gruppo: 'Cardio', img: 'Bicycling_Stationary', tipo: 'min',
+    id: 'cyclette', nome: 'Cyclette', gruppo: 'Cardio', img: 'Bicycling_Stationary', tipo: 'min', cardio: ['liv'],
     alias: ['cyclette', 'bici', 'spinning', 'bike'],
     muscoli: 'Cardio, gambe',
     passi: ['Regola il sellino: con il pedale in basso la gamba resta appena piegata.', 'Pedala alla resistenza indicata.'],
     consigli: ['Ottima per il cardio dopo i pesi senza affaticare le articolazioni.'],
   },
   {
-    id: 'ellittica', nome: 'Ellittica', gruppo: 'Cardio', img: 'Elliptical_Trainer', tipo: 'min',
+    id: 'ellittica', nome: 'Ellittica', gruppo: 'Cardio', img: 'Elliptical_Trainer', tipo: 'min', cardio: ['liv'],
     alias: ['ellittica', 'elliptical'],
     muscoli: 'Cardio, tutto il corpo',
     passi: ['Sali sui pedali e impugna le maniglie mobili.', 'Spingi e tira con braccia e gambe a ritmo costante.'],
     consigli: ['Mantieni il busto dritto.'],
   },
   {
-    id: 'vogatore', nome: 'Vogatore', gruppo: 'Cardio', img: 'Rowing_Stationary', tipo: 'min',
+    id: 'vogatore', nome: 'Vogatore', gruppo: 'Cardio', img: 'Rowing_Stationary', tipo: 'min', cardio: ['liv'],
     alias: ['vogatore', 'rowing', 'remoergometro'],
     muscoli: 'Cardio, schiena, gambe',
     passi: ['Spingi prima con le gambe, poi porta indietro il busto e tira la maniglia al petto.', 'Torna avanti nell\'ordine inverso.'],
     consigli: ['La forza viene per il 60% dalle gambe.'],
   },
   {
-    id: 'stepper', nome: 'Stair climber', gruppo: 'Cardio', img: 'Stairmaster', tipo: 'min',
+    id: 'stepper', nome: 'Stair climber', gruppo: 'Cardio', img: 'Stairmaster', tipo: 'min', cardio: ['liv'],
     alias: ['stair climber', 'scale', 'stepper', 'stairmaster'],
     muscoli: 'Cardio, glutei, gambe',
     passi: ['Sali i gradini a ritmo costante.', 'Tieniti alle maniglie solo per l\'equilibrio.'],
