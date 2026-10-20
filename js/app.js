@@ -336,6 +336,8 @@ function toggleSet(i, si) {
   const s = it.sets[si];
   s.done = !s.done;
   if (s.done) {
+    // Piccola vibrazione: si sente che il tocco su ✓ è arrivato.
+    if (native?.vibrate) native.vibrate('0,40'); else navigator.vibrate?.(40);
     if (it.tipo === 'sec' || it.tipo === 'min') s.val ??= it.target.min;
     else s.reps ??= it.target.max;
     // Senza peso la serie conta 0 kg e falsa record e consigli: si avvisa (si può correggere anche dopo).
