@@ -523,28 +523,58 @@ function stopRest() {
 function alarm() {
   if (native?.vibrate) native.vibrate('0,600,200,600,200,900');
   else navigator.vibrate?.([600, 200, 600, 200, 900]);
-  beep();
+  playSound();
 }
 
-// Suono a tutto volume (segue il volume dei contenuti multimediali): 12 bip alternati in 3 secondi.
-function beep() {
-  if (!audio) return;
+// Suoni di fine recupero (si sceglie in Altro): durano 2-3 secondi, a tutto volume (volume dei contenuti multimediali).
+const SOUNDS = {
+  bip: ['Bip bip', 'Il classico: bip alternati'],
+  campanella: ['Campanella', 'Tre rintocchi chiari'],
+  sveglia: ['Sveglia digitale', 'Bip-bip-bip-bip a gruppi'],
+  melodia: ['Melodia', 'Note che salgono, allegre'],
+  fischietto: ['Fischietto', 'Come l\'allenatore'],
+  gong: ['Gong', 'Profondo e lungo'],
+  nessuno: ['Solo vibrazione', 'Nessun suono'],
+};
+/** Una nota: forma d'onda, frequenza, volume, attacco breve e coda (decay) in secondi. */
+function tone(out, at, freq, dur, type = 'sine', vol = 0.8, decay = 0.05) {
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, at);
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(vol, at + 0.01);
+  g.gain.setValueAtTime(vol, at + Math.max(0.011, dur - decay));
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  o.connect(g).connect(out);
+  o.start(at);
+  o.stop(at + dur + 0.02);
+  return o;
+}
+function playSound(kind = profile.suono ?? 'bip') {
+  if (!audio || kind === 'nessuno') return;
   audio.resume?.();
   const t0 = audio.currentTime + 0.02;
   const out = audio.createDynamicsCompressor();
   out.connect(audio.destination);
-  for (let i = 0; i < 12; i++) {
-    const at = t0 + i * 0.25;
-    const o = audio.createOscillator(), g = audio.createGain();
-    o.type = 'square';
-    o.frequency.value = i % 2 ? 1320 : 990;
-    g.gain.setValueAtTime(0.0001, at);
-    g.gain.exponentialRampToValueAtTime(0.9, at + 0.01);
-    g.gain.setValueAtTime(0.9, at + 0.16);
-    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.2);
-    o.connect(g).connect(out);
-    o.start(at);
-    o.stop(at + 0.21);
+  if (kind === 'campanella') {
+    for (let i = 0; i < 3; i++) for (const [f, v] of [[1568, 0.7], [3136, 0.25], [4704, 0.12]]) tone(out, t0 + i * 0.85, f, 0.8, 'sine', v, 0.75);
+  } else if (kind === 'sveglia') {
+    for (let r = 0; r < 3; r++) for (let i = 0; i < 4; i++) tone(out, t0 + r * 0.9 + i * 0.13, 2000, 0.08, 'square', 0.6, 0.02);
+  } else if (kind === 'melodia') {
+    [523, 659, 784, 1047, 784, 1047, 1319, 1568].forEach((f, i) => { tone(out, t0 + i * 0.22, f, 0.3, 'triangle', 0.9, 0.2); tone(out, t0 + i * 0.22, f * 2, 0.2, 'sine', 0.2, 0.15); });
+  } else if (kind === 'fischietto') {
+    for (const [at, dur] of [[0, 0.45], [0.6, 0.45], [1.2, 1.1]]) {
+      const o = tone(out, t0 + at, 2600, dur, 'sine', 0.8, 0.06);
+      const lfo = audio.createOscillator(), depth = audio.createGain();
+      lfo.frequency.value = 28; depth.gain.value = 90;
+      lfo.connect(depth).connect(o.frequency);
+      lfo.start(t0 + at); lfo.stop(t0 + at + dur + 0.02);
+    }
+  } else if (kind === 'gong') {
+    for (const [f, v] of [[110, 0.9], [165, 0.5], [220, 0.35], [331, 0.2]]) tone(out, t0, f, 2.8, 'sine', v, 2.7);
+    tone(out, t0 + 1.4, 110, 1.4, 'sine', 0.5, 1.35);
+  } else {
+    for (let i = 0; i < 12; i++) tone(out, t0 + i * 0.25, i % 2 ? 1320 : 990, 0.2, 'square', 0.9, 0.04);
   }
 }
 
@@ -1597,6 +1627,10 @@ function morePage() {
   view.innerHTML = `<header class="top"><h1>Altro</h1></header>
     <h2>Profilo</h2>
     <label class="field"><span>Il tuo nome</span><input id="profileName" value="${esc(profile.nome)}" placeholder="es. Andrea" autocomplete="off"></label>
+    <h2>Suono di fine recupero</h2>
+    <p class="note">Tocca un suono per sentirlo e sceglierlo. Con l'app chiusa suona la notifica del telefono.</p>
+    <div class="list">${Object.entries(SOUNDS).map(([id, [nome, desc]]) => `<button class="row" data-sound="${id}"><span><b>${nome}</b><small>${desc}</small></span>
+      <span class="chev">${(profile.suono ?? 'bip') === id ? '✓' : '▶'}</span></button>`).join('')}</div>
     <h2>Esercizi</h2>
     <a class="row" href="#/libreria"><span><b>Libreria degli esercizi</b><small>${EXERCISES.length} esercizi con foto, spiegazione e consigli</small></span><span class="chev">›</span></a>
     <h2>Backup</h2>
@@ -1817,6 +1851,15 @@ function itemFromInfo(ref) {
 
 document.addEventListener('click', async e => {
   const t = e.target;
+  const snd = t.closest('[data-sound]');
+  if (snd) {   // scelta del suono di fine recupero: si sente subito
+    try { audio ??= new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch { /* niente suono */ }
+    profile.suono = snd.dataset.sound;
+    setSetting('profile', profile);
+    playSound();
+    morePage();
+    return;
+  }
   const info = t.closest('[data-info]');
   if (info) { const it = itemFromInfo(info.dataset.info); if (it) openExercise(it); return; }
   const lib = t.closest('[data-lib]');
