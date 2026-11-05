@@ -240,6 +240,7 @@ function workoutPage() {
     <div class="progress"><i style="width:${total ? (done / total) * 100 : 0}%"></i></div>
     <p class="note">${done} di ${total} serie · tocca ✓ alla fine di ogni serie: parte il recupero.</p>
     ${current.items.map((it, i) => workoutItem(it, i)).join('')}
+    <button class="secondary wide add-ex" data-woadd>+ Aggiungi un esercizio</button>
     <button class="primary" data-finish>Termina allenamento</button>
     <button class="link danger" data-cancel>Annulla allenamento</button>`;
   tickElapsed();
@@ -273,7 +274,7 @@ function workoutItem(it, i) {
       <button class="tick" data-done aria-label="Serie fatta">✓</button>
     </div>`).join('')}</div>
     <div class="set-tools"><button class="link" data-addset>+ Serie</button>${it.sets.length > 1 ? '<button class="link" data-delset>− Serie</button>' : ''}
-      <button class="link swap" data-swap>⇄ Cambia esercizio</button></div>
+      <button class="link swap" data-swap>⇄ Cambia esercizio</button>${it.extra ? '<button class="link danger-link" data-wodel>Togli</button>' : ''}</div>
   </section>`;
 }
 
@@ -987,6 +988,65 @@ async function saveBlock() {
   planEditor();
   const unknown = block.esercizi.filter(x => !x.ex).map(x => x.nome);
   toast(unknown.length ? `Salvato. Non in libreria (niente foto): ${unknown.join(', ')}` : 'Blocco salvato');
+}
+
+// ---------------------------------------------------------------------------
+// Esercizio in più durante l'allenamento: dalla libreria, uno creato da te o solo con il nome. Vale per
+// questo allenamento; con la spunta resta anche nella scheda, in fondo al giorno, per le prossime volte.
+// ---------------------------------------------------------------------------
+let addToPlan = false;
+
+function workoutAddSheet() {
+  addToPlan = false;
+  sheet.innerHTML = `<div class="sheet-head"><div><h2>Aggiungi un esercizio</h2><small>all'allenamento ${esc(current.dayName)}</small></div>
+      <button class="icon" data-close aria-label="Chiudi">✕</button></div>
+    <label class="check"><input type="checkbox" id="woAddPlan"> Salvalo anche nella scheda, per le prossime volte</label>
+    <input type="search" id="woSearch" placeholder="Cerca (es. glutei, panca, lat…) o scrivi un nome" autocomplete="off">
+    <div id="woList">${woPickList('')}</div>`;
+  sheet.showModal();
+}
+
+function woPickList(q) {
+  const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const match = e => !q || [e.nome, e.muscoli, e.gruppo, ...e.alias].some(t => norm(t).includes(norm(q)));
+  // Prima quelli già fatti altre volte (sai già che peso usare)
+  const row = e => `<button class="row pick" data-wopick="${e.id}">${thumb({ ex: e.id })}<span><b>${esc(e.nome)}</b>
+    <small>${esc(e.muscoli)}${historyOf(e.id).length ? ' · già fatto' : ''}</small></span></button>`;
+  const groups = GROUPS.map(g => {
+    const list = EXERCISES.filter(e => e.gruppo === g && match(e)).sort((a, b) => (historyOf(b.id).length > 0) - (historyOf(a.id).length > 0));
+    return list.length ? `<h3>${g}</h3>${list.map(row).join('')}` : '';
+  }).join('');
+  return `${q ? `<button class="row pick" data-wofree><span><b>Usa il nome "${esc(q)}"</b><small>esercizio generico, senza foto</small></span></button>
+    <button class="row pick" data-wocreate><span><b>Crea l'esercizio "${esc(q)}"</b><small>con muscolo, spiegazione e una foto tua: lo ritrovi sempre</small></span></button>` : ''}
+    ${groups || '<p class="note">Nessun esercizio in libreria con questo nome: usa il nome scritto.</p>'}`;
+}
+
+async function workoutAdd(lib, freeName = null) {
+  if (!lib && !freeName) return;
+  const base = buildItem({ id: lib?.id, esercizio: lib?.nome ?? freeName, ...defaultsFor(lib) });
+  const key = exKey(base);
+  const last = historyOf(key)[0]?.item;
+  const sets = Array.from({ length: base.serie }, (_, k) => {
+    const prev = last?.sets[Math.min(k, last.sets.length - 1)];
+    return { kg: prev?.kg ?? null, reps: null, val: prev?.val ?? null, done: false };
+  });
+  current.items.push({ ...base, key, sets, extra: true });
+  let msg = `Aggiunto: ${base.nome}`;
+  if (addToPlan) {
+    const plan = plans.find(p => p.id === current.planId);
+    const day = plan?.giorni[current.dayIndex];
+    if (day) {
+      day.esercizi.push(base);
+      plan.updated = today();
+      await savePlans();
+      msg += ' (anche nella scheda)';
+    }
+  }
+  await saveCurrent();
+  if (sheet.open) sheet.close();
+  toast(msg);
+  workoutPage();
+  document.querySelector(`[data-item="${current.items.length - 1}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 // Scelta dell'esercizio: dalla libreria (con foto e spiegazione) oppure un nome libero.
@@ -1894,6 +1954,19 @@ document.addEventListener('click', async e => {
     toggleSet(i, si);
     return;
   }
+  if (t.closest('[data-woadd]')) return workoutAddSheet();
+  const woPick = t.closest('[data-wopick]');
+  if (woPick) return workoutAdd(exerciseById(woPick.dataset.wopick));
+  if (t.closest('[data-wofree]')) return workoutAdd(null, $('#woSearch').value.trim());
+  if (t.closest('[data-wocreate]')) return customForm(null, $('#woSearch').value.trim(), lib => workoutAdd(lib));
+  if (t.closest('[data-wodel]')) {
+    const i = +t.closest('[data-item]').dataset.item, it = current.items[i];
+    if (it.sets.some(s => s.done) && !confirm(`Togliere ${it.nome}? Le serie segnate non vengono salvate.`)) return;
+    current.items.splice(i, 1);
+    saveCurrent();
+    workoutPage();
+    return;
+  }
   if (t.closest('[data-swap]')) return swapSheet(+t.closest('[data-item]').dataset.item);
   const swapPick = t.closest('[data-swappick]');
   if (swapPick) return swapExercise(exerciseById(swapPick.dataset.swappick));
@@ -2060,9 +2133,11 @@ document.addEventListener('input', e => {
   if (input.id === 'libSearch') $('#libList').innerHTML = libraryList(input.value.trim());
   if (input.id === 'pickSearch') $('#pickList').innerHTML = pickList(input.value.trim());
   if (input.id === 'swapSearch') $('#swapList').innerHTML = swapList(input.value.trim());
+  if (input.id === 'woSearch') $('#woList').innerHTML = woPickList(input.value.trim());
 });
 
 document.addEventListener('change', async e => {
+  if (e.target.id === 'woAddPlan') { addToPlan = e.target.checked; return; }
   // Editor delle schede: nome, obiettivo, testi e giorni si salvano quando si lascia il campo.
   const el = e.target;
   if (el.dataset.pf || el.dataset.pl || el.dataset.df) {

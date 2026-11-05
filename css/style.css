@@ -386,3 +386,5 @@ body.timer-open #rest, body.timer-open #nav { display: none; }
 .set.cardio { gap: 4px; }
 .set.cardio input { width: 0; flex: 1 1 0; padding: 10px 2px; font-size: 16px; }
 .set.cardio .u { font-size: 11px; }
+.add-ex { border-style: dashed; margin: 14px 0 6px; }
+.danger-link { color: var(--red) !important; }
