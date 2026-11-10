@@ -1640,12 +1640,23 @@ function fogliExcel() {
   ];
 }
 
+/** L'app installata è vecchia per questa funzione: cerca l'aggiornamento e propone di installarlo subito. */
+async function proponiAggiornamento(cosa) {
+  toast('Controllo gli aggiornamenti…');
+  await checkApkUpdate();
+  if (!apkUpdate) return toast(`Per ${cosa} serve la versione nuova dell'app: riprova tra qualche minuto`);
+  if (confirm(`Per ${cosa} serve la versione ${apkUpdate.version} dell'app. Aggiorno adesso? I tuoi dati restano.`)) {
+    native.installUpdate(apkUpdate.url);
+    toast('Download in corso: al termine si apre l\'installazione');
+  }
+}
+
 async function esportaExcel() {
   if (!sessions.length && !bodyLog.length) return toast('Non ci sono ancora dati da esportare');
   const bytes = xlsx(fogliExcel());
   const name = `AC-Training-progressi-${today()}.xlsx`, mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   if (native) {
-    if (!native.shareBase64) return toast('Aggiorna l\'app (ti compare in Oggi) per esportare in Excel');
+    if (!native.shareBase64) return proponiAggiornamento('esportare in Excel');
     let bin = '';
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
     if (!native.shareBase64(name, mime, btoa(bin))) toast('Esportazione non riuscita');
@@ -1714,7 +1725,7 @@ function resocontoHtml() {
 
 function esportaPdf() {
   if (!sessions.length && !bodyLog.length) return toast('Non ci sono ancora dati da esportare');
-  if (native && !native.printPage) return toast('Aggiorna l\'app (ti compare in Oggi) per creare il PDF');
+  if (native && !native.printPage) return proponiAggiornamento('creare il PDF');
   let box = $('#print');
   if (!box) { box = document.createElement('div'); box.id = 'print'; document.body.append(box); }
   box.innerHTML = resocontoHtml();
@@ -2380,7 +2391,12 @@ function route() {
 }
 
 addEventListener('hashchange', () => { route(); scrollTo(0, 0); });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) checkWebUpdate(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  checkWebUpdate();
+  // l'app può restare aperta per giorni: al rientro si ricontrolla anche l'APK
+  checkApkUpdate().then(() => { if (apkUpdate && !location.hash.replace(/^#\/?/, '') && !sheet.open) todayPage(); });
+});
 
 // Avvio
 customExercises = await getSetting('customExercises', []);
