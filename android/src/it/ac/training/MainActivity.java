@@ -29,7 +29,10 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.print.PrintAttributes;
+import android.print.PrintManager;
 import android.provider.MediaStore;
+import android.util.Base64;
 import android.provider.Settings;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
@@ -444,6 +447,35 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return false;
             }
+        }
+
+        /** Come shareFile, ma per file binari (es. il foglio Excel): il contenuto arriva in base64. */
+        @JavascriptInterface
+        public boolean shareBase64(String name, String mime, String base64) {
+            try {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                values.put(MediaStore.MediaColumns.RELATIVE_PATH, BACKUP_DIR);
+                Uri target = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                try (OutputStream out = getContentResolver().openOutputStream(target, "wt")) {
+                    out.write(Base64.decode(base64, Base64.DEFAULT));
+                }
+                share(target, mime, name);
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        /** Apre la stampa di Android sulla pagina attuale: da lì si sceglie "Salva come PDF". */
+        @JavascriptInterface
+        public void printPage(String name) {
+            runOnUiThread(() -> {
+                PrintManager pm = (PrintManager) getSystemService(Context.PRINT_SERVICE);
+                pm.print(name, web.createPrintDocumentAdapter(name),
+                        new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4).build());
+            });
         }
     }
 

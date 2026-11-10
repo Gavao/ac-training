@@ -5,6 +5,7 @@ import { EXERCISES, GROUPS, FOCUSES, exerciseById, alternatives, setCustomExerci
 import { parsePlan, exKey, CLAUDE_PROMPT, buildItem, buildBlock, planToJson, BLOCK_MODES, parseBlockLine, CARDIO_FIELDS } from './plan.js';
 import { bars, lines } from './charts.js';
 import { APP_VERSION } from './version.js';
+import { xlsx } from './xlsx.js';
 
 const $ = sel => document.querySelector(sel);
 const view = $('#view');
@@ -1479,6 +1480,7 @@ function progressPage() {
       <div><b>${sessions.filter(s => s.date.startsWith(month)).length}</b><small>questo mese</small></div>
       <div><b>${streak}</b><small>${streak === 1 ? 'settimana' : 'settimane'} di fila</small></div>
       <div><b>${duration(sessions.reduce((a, s) => a + (s.end - s.start), 0))}</b><small>in palestra</small></div></div>
+    ${sessions.length || bodyLog.length ? `<div class="export"><button class="secondary" data-export="xlsx">📊 Esporta in Excel</button><button class="secondary" data-export="pdf">📄 Salva in PDF</button></div>` : ''}
     <h2>Allenamenti per settimana</h2>
     ${bars({ labels: weeks.map(w => shortDate(w).replace(/ \d+$/, '')), series: [{ name: 'Allenamenti', color: C_MAIN, values: perWeek }], fmt: v => plural(v, 'allenamento', 'allenamenti'), hint: 'Tocca una barra: settimana che inizia quel lunedì' })}
     <h2>Esercizi</h2>
@@ -1537,6 +1539,188 @@ function sessionSheet(id) {
     <button class="primary" data-editsession="${s.id}">Modifica pesi e ripetizioni</button>
     <button class="link danger" data-delsession="${s.id}">Elimina questo allenamento</button>`;
   if (!sheet.open) sheet.showModal();
+}
+
+// ---------------------------------------------------------------------------
+// Esportazione dei progressi: foglio Excel con tutti i dati e resoconto da salvare in PDF
+// ---------------------------------------------------------------------------
+const r1 = v => (v == null || !isFinite(v) ? null : Math.round(v * 10) / 10);
+const minuti = s => Math.round((s.end - s.start) / 60000);
+const oraDi = ms => new Date(ms).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+const pesato = it => it.tipo === 'kg' || it.tipo === 'corpo';
+const maxKg = it => Math.max(0, ...it.sets.map(s => s.kg ?? 0)) || null;
+const maxE1 = it => r1(Math.max(0, ...it.sets.map(s => e1rm(s.kg, s.reps)))) || null;
+const maxVal = it => Math.max(0, ...it.sets.map(s => s.val ?? 0)) || null;
+
+/** Per ogni esercizio: tutte le volte e i numeri principali (dal più fatto). */
+function statsEsercizi() {
+  const byKey = new Map();
+  for (const s of sessions) for (const it of s.items) {
+    const e = byKey.get(it.key) ?? { key: it.key, nome: it.nome, tipo: it.tipo, modo: it.modo, volte: [] };
+    e.nome = it.nome;
+    e.volte.push({ s, it });
+    byKey.set(it.key, e);
+  }
+  for (const e of byKey.values()) {
+    const v = e.volte, first = v[0].it, last = v.at(-1).it;
+    e.prima = v[0].s.date; e.ultima = v.at(-1).s.date;
+    e.serie = v.reduce((a, x) => a + x.it.sets.length, 0);
+    if (pesato(last)) {
+      e.kgIn = maxKg(first); e.kgOra = maxKg(last);
+      e.e1In = maxE1(first); e.e1Ora = maxE1(last);
+      e.e1Max = Math.max(0, ...v.map(x => maxE1(x.it) ?? 0)) || null;
+      const best = v.flatMap(x => x.it.sets).reduce((b, s) => (!b || (s.kg ?? 0) > (b.kg ?? 0) || ((s.kg ?? 0) === (b.kg ?? 0) && (s.reps ?? 0) > (b.reps ?? 0)) ? s : b), null);
+      e.recKg = best?.kg ?? null; e.recRip = best?.reps ?? null;
+      e.repsMax = Math.max(0, ...v.flatMap(x => x.it.sets.map(s => s.reps ?? 0))) || null;
+      e.volume = v.reduce((a, x) => a + volumeOf(x.it), 0);
+      const a = e.e1In ?? e.kgIn, b = e.e1Ora ?? e.kgOra;
+      e.cresce = a && b && v.length > 1 ? b / a - 1 : null;
+    } else if (last.tipo === 'sec' || last.tipo === 'min') {
+      e.valIn = maxVal(first); e.valOra = maxVal(last);
+      e.valMax = Math.max(0, ...v.map(x => maxVal(x.it) ?? 0)) || null;
+      e.cresce = e.valIn && e.valOra && v.length > 1 ? e.valOra / e.valIn - 1 : null;
+    }
+    e.record = last.tipo === 'blocco' ? v.map(x => blockResultText(x.it)).at(-1)
+      : pesato(last) ? (e.recKg ? `${fmt(e.recKg)} kg × ${e.recRip ?? '—'}` : e.repsMax ? `${e.repsMax} ripetizioni` : '')
+      : e.valMax ? `${fmt(e.valMax)} ${last.tipo === 'sec' ? 's' : 'min'}` : '';
+  }
+  return [...byKey.values()].sort((a, b) => b.volte.length - a.volte.length || a.nome.localeCompare(b.nome));
+}
+
+function fogliExcel() {
+  const MIS = MEASURES;
+  const settimane = [];
+  if (sessions.length) {
+    const d = new Date(weekStart(sessions[0].date) + 'T12:00:00'), fine = weekStart(today());
+    for (let w = d.toISOString().slice(0, 10); w <= fine; d.setDate(d.getDate() + 7), w = d.toISOString().slice(0, 10)) {
+      const ss = sessions.filter(s => weekStart(s.date) === w);
+      settimane.push([w, ss.length, ss.reduce((a, s) => a + minuti(s), 0), ss.reduce((a, s) => a + s.items.reduce((b, it) => b + it.sets.length, 0), 0),
+        Math.round(ss.reduce((a, s) => a + s.items.reduce((b, it) => b + volumeOf(it), 0), 0))]);
+    }
+  }
+  const serie = [];
+  for (const s of sessions) for (const it of s.items) {
+    if (it.tipo === 'blocco' || !it.sets.length) { serie.push([s.date, s.dayName, s.planName, it.nome, null, null, null, null, null, null, null, null, null, null, blockResultText(it)]); continue; }
+    it.sets.forEach((x, i) => serie.push([s.date, s.dayName, s.planName, it.nome, i + 1,
+      pesato(it) ? x.kg ?? null : null, pesato(it) ? x.reps ?? null : null,
+      it.tipo === 'sec' ? x.val ?? null : null, it.tipo === 'min' ? x.val ?? null : null, x.vel ?? null, x.pend ?? null, x.liv ?? null,
+      pesato(it) && x.kg && x.reps ? x.kg * x.reps : null, pesato(it) ? r1(e1rm(x.kg, x.reps)) || null : null, '']));
+  }
+  return [
+    { name: 'Progressi esercizi', cols: [
+      { title: 'Esercizio', width: 30 }, { title: 'Volte', width: 7, type: 'int' }, { title: 'Serie fatte', width: 10, type: 'int' },
+      { title: 'Prima volta', width: 11, type: 'date' }, { title: 'Ultima volta', width: 11, type: 'date' }, { title: 'Record', width: 16 },
+      { title: 'Peso max all\'inizio (kg)', width: 13, type: 'dec' }, { title: 'Peso max ultima volta (kg)', width: 13, type: 'dec' },
+      { title: 'Massimale stimato all\'inizio (kg)', width: 15, type: 'dec' }, { title: 'Massimale stimato ultima volta (kg)', width: 15, type: 'dec' },
+      { title: 'Miglior massimale stimato (kg)', width: 15, type: 'dec' }, { title: 'Tempo all\'inizio', width: 10, type: 'dec' }, { title: 'Tempo ultima volta', width: 10, type: 'dec' },
+      { title: 'Miglioramento', width: 13, type: 'pct' }, { title: 'Volume totale (kg)', width: 13, type: 'int' }],
+      rows: statsEsercizi().map(e => [e.nome, e.volte.length, e.serie, e.prima, e.ultima, e.record, e.kgIn, e.kgOra, e.e1In, e.e1Ora, e.e1Max,
+        e.valIn, e.valOra, e.cresce, e.volume ? Math.round(e.volume) : null]) },
+    { name: 'Allenamenti', cols: [
+      { title: 'Data', width: 11, type: 'date' }, { title: 'Ora', width: 7 }, { title: 'Giorno', width: 16 }, { title: 'Scheda', width: 20 },
+      { title: 'Durata (min)', width: 10, type: 'int' }, { title: 'Esercizi', width: 9, type: 'int' }, { title: 'Serie', width: 7, type: 'int' },
+      { title: 'Volume (kg)', width: 11, type: 'int' }, { title: 'Dettaglio', width: 90 }],
+      rows: sessions.map(s => [s.date, oraDi(s.start), s.dayName, s.planName, minuti(s), s.items.length, s.items.reduce((a, it) => a + it.sets.length, 0),
+        Math.round(s.items.reduce((a, it) => a + volumeOf(it), 0)), s.items.map(it => `${it.nome}: ${setsText(it)}`).join(' | ')]) },
+    { name: 'Tutte le serie', cols: [
+      { title: 'Data', width: 11, type: 'date' }, { title: 'Giorno', width: 16 }, { title: 'Scheda', width: 18 }, { title: 'Esercizio', width: 30 },
+      { title: 'Serie', width: 6, type: 'int' }, { title: 'Kg', width: 7, type: 'dec' }, { title: 'Ripetizioni', width: 10, type: 'int' },
+      { title: 'Secondi', width: 8, type: 'dec' }, { title: 'Minuti', width: 8, type: 'dec' }, { title: 'Velocità (km/h)', width: 10, type: 'dec' },
+      { title: 'Pendenza (%)', width: 10, type: 'dec' }, { title: 'Livello', width: 8, type: 'dec' }, { title: 'Volume (kg)', width: 10, type: 'dec' },
+      { title: 'Massimale stimato (kg)', width: 13, type: 'dec' }, { title: 'Risultato blocco', width: 26 }],
+      rows: serie },
+    { name: 'Settimane', cols: [
+      { title: 'Settimana dal', width: 13, type: 'date' }, { title: 'Allenamenti', width: 11, type: 'int' }, { title: 'Minuti', width: 9, type: 'int' },
+      { title: 'Serie', width: 8, type: 'int' }, { title: 'Volume (kg)', width: 12, type: 'int' }],
+      rows: settimane },
+    { name: 'Corpo', cols: [
+      { title: 'Data', width: 11, type: 'date' }, { title: 'Peso (kg)', width: 10, type: 'dec' }, { title: 'Massa grassa (%)', width: 12, type: 'dec' },
+      { title: 'Massa muscolare (kg)', width: 13, type: 'dec' }, ...MIS.map(([, l]) => ({ title: `${l} (cm)`, width: 11, type: 'dec' }))],
+      rows: bodyLog.map(b => [b.date, b.peso ?? null, b.grasso ?? null, b.muscolo ?? null, ...MIS.map(([m]) => b.misure?.[m] ?? null)]) },
+  ];
+}
+
+async function esportaExcel() {
+  if (!sessions.length && !bodyLog.length) return toast('Non ci sono ancora dati da esportare');
+  const bytes = xlsx(fogliExcel());
+  const name = `AC-Training-progressi-${today()}.xlsx`, mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (native) {
+    if (!native.shareBase64) return toast('Aggiorna l\'app (ti compare in Oggi) per esportare in Excel');
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    if (!native.shareBase64(name, mime, btoa(bin))) toast('Esportazione non riuscita');
+    else toast('Salvato in Download/ACTraining');
+    return;
+  }
+  const file = new File([bytes], name, { type: mime });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'Progressi AC Training' }); return; } catch (err) { if (err.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+/** Resoconto stampabile (A4, chiaro): numeri, grafici per esercizio, corpo e storico completo. */
+function resocontoHtml() {
+  const ex = statsEsercizi();
+  const tot = sessions.reduce((a, s) => a + (s.end - s.start), 0);
+  const serie = sessions.reduce((a, s) => a + s.items.reduce((b, it) => b + it.sets.length, 0), 0);
+  const volume = sessions.reduce((a, s) => a + s.items.reduce((b, it) => b + volumeOf(it), 0), 0);
+  const pct = v => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : '±'}${fmt(Math.abs(v * 100))}%`);
+  const settimane = [];
+  if (sessions.length) {
+    const d = new Date(weekStart(sessions[0].date) + 'T12:00:00'), fine = weekStart(today());
+    for (let w = d.toISOString().slice(0, 10); w <= fine; d.setDate(d.getDate() + 7), w = d.toISOString().slice(0, 10)) settimane.push(w);
+  }
+  const ultime = settimane.slice(-26);
+  const grafico = e => {
+    const labels = e.volte.map(x => shortDate(x.s.date));
+    if (e.volte.length < 2) return '';
+    if (e.kgOra != null || e.e1Ora != null) return lines({ labels, hint: '', series: [
+      { name: 'Peso massimo', color: C_MAIN, values: e.volte.map(x => maxKg(x.it)) },
+      { name: 'Massimale stimato', color: C_ALT, values: e.volte.map(x => maxE1(x.it)) }], fmt: v => `${fmt(v)} kg` });
+    if (e.valOra != null) return lines({ labels, hint: '', series: [{ name: e.tipo === 'sec' ? 'Secondi' : 'Minuti', color: C_MAIN, values: e.volte.map(x => maxVal(x.it)) }], fmt: v => fmt(v) });
+    return '';
+  };
+  const corpo = bodyLog.length ? `<h2>Corpo</h2>
+    ${[['peso', 'Peso', 'kg'], ['grasso', 'Massa grassa', '%'], ['muscolo', 'Massa muscolare', 'kg']].map(([k, n, u]) => {
+      const vals = bodyLog.map(b => b[k] ?? null);
+      return vals.filter(v => v != null).length > 1 ? `<div class="p-blocco"><h3>${n}</h3>${lines({ labels: bodyLog.map(b => shortDate(b.date)), hint: '', series: [{ name: n, color: C_MAIN, values: vals }], fmt: v => `${fmt(v)} ${u}` })}</div>` : '';
+    }).join('')}
+    <table class="p-tab"><thead><tr><th>Data</th><th>Peso</th><th>Grasso</th><th>Muscolo</th>${MEASURES.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead>
+    <tbody>${bodyLog.map(b => `<tr><td>${shortDate(b.date)}</td><td>${fmt(b.peso)}</td><td>${fmt(b.grasso)}</td><td>${fmt(b.muscolo)}</td>${MEASURES.map(([m]) => `<td>${fmt(b.misure?.[m])}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '';
+  return `<div class="p-head"><div><h1>AC Training · Progressi</h1>
+      <p>${profile.nome ? `${esc(profile.nome)} · ` : ''}${sessions.length ? `dal ${longDate(sessions[0].date)} al ${longDate(sessions.at(-1).date)}` : ''}</p></div>
+      <p class="p-data">Creato il ${shortDate(today())}</p></div>
+    <div class="kpis p-kpis"><div><b>${sessions.length}</b><small>allenamenti</small></div><div><b>${duration(tot)}</b><small>in palestra</small></div>
+      <div><b>${serie}</b><small>serie</small></div><div><b>${fmt(volume / 1000)} t</b><small>sollevate in tutto</small></div></div>
+    ${ultime.length > 1 ? `<h2>Allenamenti per settimana</h2>${bars({ labels: ultime.map(w => shortDate(w).replace(/ \d+$/, '')), hint: '', series: [{ name: 'Allenamenti', color: C_MAIN, values: ultime.map(w => sessions.filter(s => weekStart(s.date) === w).length) }], fmt: v => String(v) })}` : ''}
+    <h2>Esercizi</h2>
+    <table class="p-tab"><thead><tr><th>Esercizio</th><th>Volte</th><th>Record</th><th>Inizio</th><th>Ultima volta</th><th>Progresso</th></tr></thead>
+    <tbody>${ex.map(e => `<tr><td>${esc(e.nome)}</td><td>${e.volte.length}</td><td>${esc(e.record)}</td>
+      <td>${e.e1In != null ? `${fmt(e.e1In)} kg` : e.kgIn != null ? `${fmt(e.kgIn)} kg` : e.valIn != null ? `${fmt(e.valIn)} ${e.tipo === "sec" ? "s" : "min"}` : '—'}</td>
+      <td>${e.e1Ora != null ? `${fmt(e.e1Ora)} kg` : e.kgOra != null ? `${fmt(e.kgOra)} kg` : e.valOra != null ? `${fmt(e.valOra)} ${e.tipo === "sec" ? "s" : "min"}` : '—'}</td>
+      <td class="${e.cresce > 0 ? 'su' : e.cresce < 0 ? 'giu' : ''}">${pct(e.cresce)}</td></tr>`).join('')}</tbody></table>
+    <p class="p-nota">Inizio e ultima volta: massimale stimato (il peso che solleveresti una volta sola, formula di Epley) per gli esercizi con i pesi, secondi o minuti per quelli a tempo.</p>
+    <div class="p-grafici">${ex.filter(e => e.volte.length > 1 && (e.kgOra != null || e.valOra != null)).map(e => `<div class="p-blocco"><h3>${esc(e.nome)} <small>${e.volte.length} volte · record ${esc(e.record)}</small></h3>${grafico(e)}</div>`).join('')}</div>
+    ${corpo}
+    <h2>Storico degli allenamenti</h2>
+    ${[...sessions].reverse().map(s => `<div class="p-sess"><b>${esc(longDate(s.date))} · Allenamento ${esc(s.dayName)}</b> <small>${esc(s.planName)} · ${duration(s.end - s.start)}</small>
+      <table class="p-tab"><tbody>${s.items.map(it => `<tr><td>${esc(it.nome)}</td><td>${esc(setsText(it))}</td></tr>`).join('')}</tbody></table></div>`).join('')}`;
+}
+
+function esportaPdf() {
+  if (!sessions.length && !bodyLog.length) return toast('Non ci sono ancora dati da esportare');
+  if (native && !native.printPage) return toast('Aggiorna l\'app (ti compare in Oggi) per creare il PDF');
+  let box = $('#print');
+  if (!box) { box = document.createElement('div'); box.id = 'print'; document.body.append(box); }
+  box.innerHTML = resocontoHtml();
+  if (native) native.printPage(`AC Training progressi ${today()}`);
+  else setTimeout(() => print(), 50);
+  toast('Scegli "Salva come PDF" come stampante');
 }
 
 // Modifica di un allenamento già salvato: data, peso e ripetizioni (o secondi/minuti) di ogni serie,
@@ -2084,6 +2268,8 @@ document.addEventListener('click', async e => {
   const measure = t.closest('[data-measure]');
   if (measure) { measurePick = measure.dataset.measure; bodyPage(); return; }
   if (t.closest('[data-backup]')) return saveBackup();
+  const exp = t.closest('[data-export]');
+  if (exp) return exp.dataset.export === 'pdf' ? esportaPdf() : esportaExcel();
   if (t.closest('[data-restore]')) return $('#restoreFile').click();
   if (t.closest('[data-update]')) { native.installUpdate(apkUpdate.url); toast('Download in corso: al termine si apre l\'installazione'); return; }
   if (t.closest('[data-checkupdate]')) {

@@ -3,7 +3,7 @@ const SHELL = 'shell-v1';
 const IMAGES = 'images-v1';
 const FILES = [
   './', 'index.html', 'css/style.css', 'manifest.webmanifest',
-  'js/app.js', 'js/db.js', 'js/exercises.js', 'js/plan.js', 'js/charts.js', 'js/version.js',
+  'js/app.js', 'js/db.js', 'js/exercises.js', 'js/plan.js', 'js/charts.js', 'js/xlsx.js', 'js/version.js',
   'icons/icon-192.png', 'icons/icon-512.png',
 ];
 

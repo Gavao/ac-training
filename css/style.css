@@ -388,3 +388,46 @@ body.timer-open #rest, body.timer-open #nav { display: none; }
 .set.cardio .u { font-size: 11px; }
 .add-ex { border-style: dashed; margin: 14px 0 6px; }
 .danger-link { color: var(--red) !important; }
+
+/* Esportazione dei progressi */
+.export { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 6px; }
+.export .secondary { margin: 0; }
+#print { display: none; }
+
+/* Resoconto da stampare o salvare in PDF: chiaro, su A4 */
+@page { size: A4; margin: 14mm 12mm; }
+@media print {
+  body > *:not(#print) { display: none !important; }
+  body { background: #fff; color: #111; font-size: 11pt; }
+  #print {
+    display: block;
+    --bg: #fff; --panel: #fff; --panel-2: #f2f5f3; --line: #cfd8d2; --text: #111; --muted: #555; --accent: #166534;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  #print h1 { font-size: 20pt; margin: 0; color: #166534; }
+  #print h2 { font-size: 13pt; margin: 18px 0 6px; color: #166534; text-transform: none; letter-spacing: 0; border-bottom: 2px solid #166534; padding-bottom: 2px; break-after: avoid; }
+  #print h3 { font-size: 11pt; margin: 10px 0 4px; }
+  #print h3 small { font-weight: 400; color: #555; }
+  .p-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; }
+  .p-head p { margin: 2px 0 0; color: #555; }
+  .p-kpis { grid-template-columns: repeat(4, 1fr); }
+  .p-kpis div { border: 1px solid #cfd8d2; }
+  #print .chart { border: 1px solid #cfd8d2; padding: 6px 8px; break-inside: avoid; }
+  #print .chart-read { display: none; }
+  #print .chart svg { max-height: 150px; }
+  #print .chart polyline[stroke="#4ade80"], #print .chart rect[fill="#4ade80"] { stroke: #16a34a; }
+  .p-blocco { break-inside: avoid; }
+  .p-tab { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+  .p-tab th { text-align: left; background: #166534; color: #fff; padding: 4px 6px; }
+  .p-tab td { padding: 3px 6px; border-bottom: 1px solid #e1e7e3; vertical-align: top; }
+  .p-tab tr { break-inside: avoid; }
+  .p-tab td.su { color: #15803d; font-weight: 700; }
+  .p-tab td.giu { color: #b91c1c; font-weight: 700; }
+  .p-nota { color: #555; font-size: 9pt; margin: 4px 0; }
+  .p-sess { margin: 8px 0; break-inside: avoid; }
+  .p-sess small { color: #555; }
+}
+@media print {
+  .p-grafici { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .p-grafici .chart-axis small:nth-child(2) { display: none; }
+}
