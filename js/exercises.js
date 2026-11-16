@@ -796,6 +796,50 @@ export const EXERCISES = [
     consigli: ['Per renderlo più difficile solleva i piedi da terra.', 'Una ripetizione = destra + sinistra.'],
   },
   {
+    id: 'crunch-obliquo', nome: 'Crunch obliquo', gruppo: 'Addome', tipo: 'corpo',
+    alias: ['crunch obliquo', 'crunch obliqui', 'crunch incrociato', 'cross body crunch', 'crunch gomito ginocchio'],
+    muscoli: 'Obliqui, addome',
+    passi: [
+      'Sdraiato con le ginocchia piegate e le mani dietro la testa.',
+      'Solleva le spalle e ruota il busto portando il gomito verso il ginocchio opposto.',
+      'Scendi lentamente e ripeti dall\'altro lato.',
+    ],
+    consigli: ['Non tirare il collo con le mani: il gomito va verso il ginocchio grazie all\'addome.', 'Le ripetizioni sono per lato.'],
+  },
+  {
+    id: 'posizione-bambino', nome: 'Posizione del bambino', gruppo: 'Schiena', tipo: 'sec',
+    alias: ['posizione del bambino', 'child pose', 'childs pose', 'balasana'],
+    muscoli: 'Schiena, fianchi (allungamento)',
+    passi: [
+      'In ginocchio, siediti sui talloni con le ginocchia un po\' aperte.',
+      'Porta il busto in avanti fino ad appoggiare la pancia sulle cosce e la fronte a terra.',
+      'Allunga le braccia davanti a te e respira lentamente.',
+    ],
+    consigli: ['Rilassa le spalle e lascia andare la schiena.', 'Utile anche con i crampi del ciclo.'],
+  },
+  {
+    id: 'ginocchia-petto', nome: 'Ginocchia al petto', gruppo: 'Schiena', tipo: 'sec',
+    alias: ['ginocchia al petto', 'knee to chest', 'abbraccio delle ginocchia'],
+    muscoli: 'Zona lombare (allungamento)',
+    passi: [
+      'Sdraiato sulla schiena.',
+      'Porta le ginocchia al petto e abbracciale con le mani.',
+      'Tieni la posizione respirando; se vuoi dondola piano a destra e sinistra.',
+    ],
+    consigli: ['La testa resta appoggiata a terra.'],
+  },
+  {
+    id: 'stretching-gambe', nome: 'Stretching gambe e glutei', gruppo: 'Gambe', tipo: 'sec',
+    alias: ['stretching', 'stretching gambe', 'stretching gambe e glutei', 'allungamento'],
+    muscoli: 'Cosce, femorali, glutei (allungamento)',
+    passi: [
+      'Femorali: seduto a terra, una gamba tesa, piegati in avanti verso il piede.',
+      'Cosce: in piedi, porta il tallone al gluteo tenendo la caviglia.',
+      'Glutei: sdraiato, appoggia una caviglia sul ginocchio opposto e tira la gamba verso il petto.',
+    ],
+    consigli: ['Tieni ogni allungamento 20-30 secondi per lato, senza molleggiare.', 'Deve tirare, non fare male.'],
+  },
+  {
     id: 'dead-bug', nome: 'Dead bug', gruppo: 'Addome', img: 'Dead_Bug', tipo: 'corpo',
     alias: ['dead bug', 'scarafaggio'],
     muscoli: 'Addome profondo',
@@ -998,6 +1042,7 @@ const SWAP = {
   'crunch-inverso': ['addome', 'Ginocchia al petto: lavora di più la parte bassa dell\'addome.'],
   'crunch-cavi': ['addome', 'In ginocchio al cavo: si può caricare, ottimo per progredire.'],
   'russian-twist': ['addome', 'Rotazioni da seduto: lavora i fianchi (obliqui).'],
+  'crunch-obliquo': ['addome', 'Crunch con rotazione, gomito verso il ginocchio opposto: lavora i fianchi (obliqui).'],
   'dead-bug': ['addome', 'A terra, braccia e gambe alternate: addome profondo, delicato con la schiena.'],
   'leg-raise': ['addome', 'Appeso alla sbarra: addome basso, impegnativo; a ginocchia piegate è più facile.'],
   'mountain-climber': ['addome', 'Ginocchia al petto veloci: addome e un po\' di cardio.'],
